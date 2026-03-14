@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="L-TEX Ліди">
+<meta name="theme-color" content="#1A3C5E">
+<title>L-TEX | Парсер лідів</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#f8f9fa;--card:#ffffff;--border:#dee2e6;--text:#212529;--muted:#6c757d;
+  --blue:#1A3C5E;--blue-light:#2E6DA4;--blue-bg:#e8f0f8;
+  --green:#2d6a4f;--green-bg:#d8f3dc;
+  --red:#c0392b;--red-bg:#fdecea;
+  --radius:12px;--radius-sm:8px;
+}
+@media(prefers-color-scheme:dark){
+  :root{--bg:#0f1117;--card:#1a1d23;--border:#2d3139;--text:#e8eaed;--muted:#9aa0a6;--blue-bg:#1a2a3a;--green-bg:#1a2e22;--red-bg:#2e1a1a}
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding-bottom:80px}
+.header{background:var(--blue);color:#fff;padding:16px 16px 14px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.2)}
+.header-inner{max-width:700px;margin:0 auto;display:flex;align-items:center;gap:10px}
+.logo{width:32px;height:32px;background:rgba(255,255,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0}
+.header h1{font-size:16px;font-weight:600}
+.header p{font-size:11px;opacity:0.7;margin-top:1px}
+.content{max-width:700px;margin:0 auto;padding:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:12px}
+.card-title{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.8px}
+.label{font-size:12px;color:var(--muted);margin-bottom:5px;display:block;font-weight:500}
+.row{margin-bottom:14px}
+input,select,textarea{width:100%;font-family:inherit;font-size:15px;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;outline:none;-webkit-appearance:none;appearance:none;transition:border-color .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--blue-light)}
+textarea{resize:vertical;min-height:80px;line-height:1.5}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236c757d' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.badge{font-size:12px;padding:5px 10px;border-radius:20px;border:1px solid var(--border);cursor:pointer;color:var(--muted);background:var(--card);white-space:nowrap;transition:all .15s}
+.badge:hover{background:var(--blue-bg);border-color:var(--blue-light);color:var(--blue-light)}
+.input-area{display:grid;grid-template-columns:1fr;gap:10px}
+@media(min-width:500px){.input-area{grid-template-columns:1fr 1fr}}
+.drop-zone{border:1.5px dashed var(--border);border-radius:var(--radius-sm);padding:20px 16px;text-align:center;cursor:pointer;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;transition:all .15s;background:var(--bg)}
+.drop-zone:hover{border-color:var(--blue-light);background:var(--blue-bg)}
+.drop-icon{font-size:28px;opacity:0.4}
+img#imgPreview{max-width:100%;border-radius:var(--radius-sm);margin-top:8px;display:none}
+.btn-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--card);color:var(--text);font-size:14px;cursor:pointer;font-family:inherit;font-weight:500;transition:all .15s;white-space:nowrap}
+.btn:active{transform:scale(0.97)}
+.btn-blue{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-blue:disabled{opacity:0.6;cursor:not-allowed;transform:none}
+.btn-green{background:var(--green);border-color:var(--green);color:#fff}
+.status{font-size:13px;color:var(--muted)}
+.status.ok{color:var(--green)}
+.status.err{color:var(--red)}
+.grid-2{display:grid;grid-template-columns:1fr;gap:0}
+@media(min-width:500px){.grid-2{grid-template-columns:1fr 1fr;gap:12px}}
+.output-wrap{background:var(--blue-bg);border:1px solid var(--blue-light);border-radius:var(--radius-sm);padding:14px;font-size:14px;white-space:pre-wrap;line-height:1.7;cursor:pointer;color:var(--text);min-height:60px;transition:opacity .15s}
+.output-wrap:hover{opacity:0.85}
+.copy-hint{font-size:11px;color:var(--muted);margin-top:6px;text-align:center}
+.divider{height:1px;background:var(--border);margin:14px 0}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.req{color:var(--red);margin-left:2px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <div class="logo">LT</div>
+    <div>
+      <h1>L-TEX Парсер лідів</h1>
+      <p>Розпізнавання заявок через AI</p>
+    </div>
+  </div>
+</div>
+
+<div class="content">
+
+  <div class="card">
+    <div class="card-title">Вхідні дані</div>
+    <div class="badges">
+      <span class="badge" onclick="fillEx('fc')">Formspree контакт</span>
+      <span class="badge" onclick="fillEx('fk')">Formspree каталог</span>
+      <span class="badge" onclick="fillEx('olx')">OLX</span>
+      <span class="badge" onclick="fillEx('free')">Вільний текст</span>
+    </div>
+    <div class="input-area">
+      <div>
+        <span class="label">Текст заявки</span>
+        <textarea id="rawText" placeholder="Вставте текст листа Formspree, повідомлення OLX, Viber або будь-який текст..." style="min-height:140px"></textarea>
+      </div>
+      <div>
+        <span class="label">Скріншот</span>
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('imgInput').click()">
+          <div class="drop-icon">📎</div>
+          <p style="font-size:13px;color:var(--muted)">Натисніть або перетягніть</p>
+          <small style="font-size:11px;color:var(--muted);opacity:0.7">PNG, JPG, JPEG</small>
+        </div>
+        <input type="file" id="imgInput" accept="image/*" style="display:none" onchange="handleImg(this)">
+        <img id="imgPreview">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-blue" onclick="parseAll()" id="parseBtn">Розпізнати через AI</button>
+      <button class="btn" onclick="clearAll()">Очистити</button>
+      <span class="status" id="st"></span>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title">Дані клієнта</div>
+      <div class="row"><span class="label">Ім'я<span class="req">*</span></span><input id="f_name" placeholder="Прізвище Ім'я" autocomplete="off"></div>
+      <div class="row"><span class="label">Телефон<span class="req">*</span></span><input id="f_phone" placeholder="0671234567" type="tel"></div>
+      <div class="row"><span class="label">Область</span><input id="f_region" placeholder="Київська"></div>
+      <div class="row"><span class="label">Місто</span><input id="f_city" placeholder="Київ"></div>
+      <div class="row"><span class="label">Цікавить</span><textarea id="f_interest" style="min-height:60px"></textarea></div>
+      <div class="row" style="margin-bottom:0"><span class="label">Контакт / Коментар</span><textarea id="f_contact" style="min-height:60px"></textarea></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Класифікація</div>
+      <div class="row">
+        <span class="label">Категорія ТТ</span>
+        <select id="f_cat">
+          <option value="">— оберіть —</option>
+          <option>Інтернет</option><option>Магазин</option><option>Хоче почати</option>
+          <option>TikTok/Ефір</option><option>Ринок стаціонарний</option>
+          <option>Для себе</option><option>Виїздна торгівля</option>
+        </select>
+      </div>
+      <div class="row">
+        <span class="label">Канал пошуку</span>
+        <select id="f_channel">
+          <option value="">— оберіть —</option>
+          <option>TikTok</option><option>TikTok Ефір</option><option>Google</option>
+          <option>OLX</option><option>Instagram</option><option>YouTube</option>
+          <option>bricabrac</option><option>Рекомендація</option><option>Інше</option>
+        </select>
+      </div>
+      <div class="row"><span class="label">Дата</span><input type="date" id="f_date"></div>
+      <div class="row">
+        <span class="label">Менеджер<span class="req">*</span> (тільки вручну)</span>
+        <select id="f_mgr">
+          <option value="">— оберіть менеджера —</option>
+          <option>Гуменюк Євген</option>
+          <option>Дунас Богдан</option>
+          <option>Захарчук Олександра</option>
+          <option>Кузенко Тарас</option>
+          <option>Максимюк Анна</option>
+        </select>
+      </div>
+      <div class="row"><span class="label">Сайт</span><input id="f_site" placeholder="https://..." type="url"></div>
+      <div class="divider"></div>
+      <button class="btn btn-green" onclick="generate()" style="width:100%">Сформувати шаблон</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Готовий шаблон для бота</div>
+    <div class="output-wrap" id="out" onclick="copyOut()">Заповніть поля і натисніть "Сформувати шаблон"</div>
+    <p class="copy-hint" id="copyHint">Натисніть щоб скопіювати → вставте в Viber боту</p>
+  </div>
+
+</div>
+
+<script>
+// ── Налаштування ──────────────────────────────────────────
+// URL твого Apps Script (проксі для API)
+const PROXY_URL = "https://script.google.com/macros/s/AKfycbwCoaCPSz73QxJTgY-sYnoNq6jZmGXl89Gnxzk7GPgdHQ9k8kYEglRL6s05jHXIgVVc/exec";
+
+let b64=null, mime='image/jpeg';
+document.getElementById('f_date').value = new Date().toISOString().split('T')[0];
+
+const st = (m,t,sp) => {
+  const e = document.getElementById('st');
+  e.innerHTML = sp ? '<span class="spinner"></span>'+m : m;
+  e.className = 'status '+(t||'');
+};
+
+const setF = (id,v) => {
+  if(!v || ['null','undefined',''].includes(String(v).trim())) return;
+  const el = document.getElementById(id); if(!el) return;
+  const val = v.toString().trim();
+  if(el.tagName==='SELECT'){
+    for(let i=0;i<el.options.length;i++){
+      if(el.options[i].value && (
+        el.options[i].value.toLowerCase()===val.toLowerCase() ||
+        val.toLowerCase().includes(el.options[i].value.toLowerCase()) ||
+        el.options[i].value.toLowerCase().includes(val.toLowerCase())
+      )){ el.selectedIndex=i; return; }
+    }
+  } else el.value = val;
+};
+
+function handleImg(inp){ if(inp.files[0]) loadImg(inp.files[0]); }
+function loadImg(f){
+  mime = f.type||'image/jpeg';
+  const r = new FileReader();
+  r.onload = e => {
+    b64 = e.target.result.split(',')[1];
+    const p = document.getElementById('imgPreview');
+    p.src = e.target.result; p.style.display='block';
+    document.getElementById('dropZone').style.display='none';
+    st('Зображення завантажено','ok');
+  };
+  r.readAsDataURL(f);
+}
+
+async function parseAll(){
+  const text = document.getElementById('rawText').value.trim();
+  if(!text && !b64){ st('Вставте текст або скріншот','err'); return; }
+  const btn = document.getElementById('parseBtn');
+  btn.disabled = true;
+  st('Розпізнаємо...','',true);
+  try {
+    const body = {
+      action: 'parse',
+      text: text,
+      image: b64 || '',
+      imageMime: mime
+    };
+    const resp = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const raw = await resp.text();
+    let p;
+    try { p = JSON.parse(raw); }
+    catch(e){ const m=raw.match(/\{[\s\S]*?\}/); p = m?JSON.parse(m[0]):{} }
+
+    if(p.error) throw new Error(p.error);
+
+    setF('f_name',p.name); setF('f_phone',p.phone);
+    setF('f_region',p.region); setF('f_city',p.city);
+    setF('f_interest',p.interest); setF('f_contact',p.contact);
+    setF('f_site',p.site); setF('f_cat',p.category); setF('f_channel',p.channel);
+    if(p.date) document.getElementById('f_date').value = p.date;
+    const n = [p.name,p.phone,p.region,p.city].filter(Boolean).length;
+    st('Готово — '+n+' полів заповнено','ok');
+  } catch(e){
+    st('Помилка: '+e.message,'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function generate(){
+  const g = id => document.getElementById(id).value.trim();
+  if(!g('f_name')){ st("Вкажіть ім'я клієнта",'err'); return; }
+  if(!g('f_phone')){ st('Вкажіть телефон','err'); return; }
+  if(!g('f_mgr')){ st('Оберіть менеджера','err'); return; }
+  const dr=g('f_date'); let ds='';
+  if(dr){ const[y,m,d]=dr.split('-'); ds=d+'.'+m+'.'+y; }
+  const L = [];
+  L.push("Ім'я: "+g('f_name'));
+  L.push("Телефон: "+g('f_phone'));
+  if(g('f_region'))  L.push("Область: "+g('f_region'));
+  if(g('f_city'))    L.push("Місто: "+g('f_city'));
+  if(g('f_cat'))     L.push("Категорія: "+g('f_cat'));
+  if(g('f_channel')) L.push("Канал: "+g('f_channel'));
+  if(g('f_interest'))L.push("Цікавить: "+g('f_interest'));
+  if(g('f_contact')) L.push("Контакт: "+g('f_contact'));
+  if(g('f_site'))    L.push("Сайт: "+g('f_site'));
+  if(ds)             L.push("Дата: "+ds);
+  L.push("Менеджер: "+g('f_mgr'));
+  document.getElementById('out').textContent = L.join('\n');
+  document.getElementById('copyHint').textContent = 'Натисніть щоб скопіювати → вставте в Viber боту';
+  st('','');
+}
+
+function copyOut(){
+  const t = document.getElementById('out').textContent;
+  if(!t||t.includes('Заповніть')) return;
+  navigator.clipboard.writeText(t).then(()=>{
+    document.getElementById('copyHint').textContent = 'Скопійовано!';
+    setTimeout(()=>{ document.getElementById('copyHint').textContent='Натисніть щоб скопіювати → вставте в Viber боту'; },2500);
+  }).catch(()=>{
+    const r=document.createRange(); r.selectNode(document.getElementById('out'));
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(r);
+  });
+}
+
+function clearAll(){
+  document.getElementById('rawText').value=''; b64=null;
+  const p=document.getElementById('imgPreview'); p.style.display='none'; p.src='';
+  document.getElementById('imgInput').value='';
+  document.getElementById('dropZone').style.display='';
+  ['f_name','f_phone','f_region','f_city','f_interest','f_contact','f_site'].forEach(id=>{document.getElementById(id).value='';});
+  ['f_cat','f_channel','f_mgr'].forEach(id=>{document.getElementById(id).selectedIndex=0;});
+  document.getElementById('f_date').value=new Date().toISOString().split('T')[0];
+  document.getElementById('out').textContent='Заповніть поля і натисніть "Сформувати шаблон"';
+  st('','');
+}
+
+const EX={
+  fc:`New form submission on L-TEX Contact Form index\nSomeone just submitted a form on bricabrac.com.ua/. Here's what they had to say:\nname\nКрістіна\nphone\n380962255669\nregion\nЧернігівська\nSubmitted 12:22 PM - 11 March 2026`,
+  fk:`New form submission on Каталог з усіма товарами\nSomeone just submitted a form on bricabrac.com.ua/. Here's what they had to say:\nproduct_name\nBric a Brac (1191)\nproduct_price\n3.4€/кг\nname\nТарас Кузенко\nphone\n0676710515\nvolume\nПалета M (~10 коробок)\nSubmitted 09:05 AM - 14 March 2026`,
+  olx:`380969095192\nЛьвівська\nСпорт мікс 1 сорт або екстра\nМагазин\nhttps://secondopt.com.ua\n14 березня 2026 р., 08:59`,
+  free:`Доброго дня, я з Києва 097 456214. Цікавлюсь Bric-a-Brac оптом, маю магазин на ринку`
+};
+function fillEx(t){ document.getElementById('rawText').value=EX[t]||''; st('Приклад завантажено','ok'); }
+</script>
+</body>
+</html>
