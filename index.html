@@ -289,136 +289,94 @@ function doCopy() {
   }
 }
 
-// ─── URI бота ────────────────────────────────────────────
 var VIBER_BOT_URI = "ltexsendpulse";
-// ─────────────────────────────────────────────────────────
 
 function isMobile() {
   return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
 }
 
-function copyToClipboard(text, callback) {
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).then(callback).catch(function() {
-      fallbackCopy(text, callback);
-    });
-  } else {
-    fallbackCopy(text, callback);
-  }
-}
-
 function fallbackCopy(text, callback) {
   var ta = document.createElement("textarea");
   ta.value = text;
-  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
   document.body.appendChild(ta);
   ta.focus();
   ta.select();
-  try { document.execCommand("copy"); } catch(e) {}
+  try { document.execCommand("copy"); } catch(err) {}
   document.body.removeChild(ta);
   if (callback) callback();
 }
 
-function showToast(msg, color, duration) {
-  var toast = document.getElementById("viberToast");
+function showToast(msg, color) {
+  var toast = document.getElementById("ltToast");
   if (!toast) {
     toast = document.createElement("div");
-    toast.id = "viberToast";
-    toast.style.cssText = [
-      "position:fixed","bottom:80px","left:50%","transform:translateX(-50%)",
-      "color:#fff","padding:14px 20px","border-radius:12px","font-size:14px",
-      "font-weight:600","z-index:9999","text-align:center","line-height:1.5",
-      "box-shadow:0 4px 20px rgba(0,0,0,.35)","max-width:320px","width:90%",
-      "transition:opacity .3s"
-    ].join(";");
+    toast.id = "ltToast";
+    toast.style.position = "fixed";
+    toast.style.bottom = "80px";
+    toast.style.left = "50%";
+    toast.style.transform = "translateX(-50%)";
+    toast.style.color = "#fff";
+    toast.style.padding = "13px 20px";
+    toast.style.borderRadius = "12px";
+    toast.style.fontSize = "14px";
+    toast.style.fontWeight = "600";
+    toast.style.zIndex = "9999";
+    toast.style.textAlign = "center";
+    toast.style.maxWidth = "320px";
+    toast.style.width = "90%";
+    toast.style.lineHeight = "1.5";
+    toast.style.boxShadow = "0 4px 20px rgba(0,0,0,.35)";
     document.body.appendChild(toast);
   }
   toast.style.background = color || "#7360f2";
   toast.textContent = msg;
   toast.style.display = "block";
-  toast.style.opacity = "1";
   clearTimeout(toast._t);
-  toast._t = setTimeout(function() {
-    toast.style.opacity = "0";
-    setTimeout(function() { toast.style.display = "none"; }, 300);
-  }, duration || 4000);
+  toast._t = setTimeout(function() { toast.style.display = "none"; }, 5000);
 }
 
 function shareViber() {
   var t = document.getElementById("out").textContent;
   if (!t || t.indexOf("Заповніть") !== -1) return;
 
-  var encoded = encodeURIComponent(t);
-  var deepLink = "viber://pa?chatURI=" + VIBER_BOT_URI + "&text=" + encoded;
-  var isMob = isMobile();
+  var deepLink = "viber://pa?chatURI=" + VIBER_BOT_URI + "&text=" + encodeURIComponent(t);
 
-  if (isMob && deepLink.length <= 2000) {
-    // ── Мобільний + короткий текст: відкриваємо Viber з текстом ──
+  if (isMobile() && deepLink.length <= 2000) {
     window.location.href = deepLink;
+    return;
+  }
 
-  } else if (isMob && deepLink.length > 2000) {
-    // ── Мобільний + довгий текст: копіюємо і відкриваємо чат ──
-    copyToClipboard(t, function() {
-      showToast("✅ Скопійовано! Вставте у Viber (довге натискання → Вставити)", "#7360f2", 5000);
-      setTimeout(function() {
-        window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
-      }, 600);
+  if (isMobile() && deepLink.length > 2000) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(t).then(function() {
+        showToast("Скопійовано! Вставте боту у Viber", "#7360f2");
+        setTimeout(function() {
+          window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
+        }, 700);
+      });
+    } else {
+      fallbackCopy(t, function() {
+        showToast("Скопійовано! Вставте боту у Viber", "#7360f2");
+        setTimeout(function() {
+          window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
+        }, 700);
+      });
+    }
+    return;
+  }
+
+  // Desktop
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(t).then(function() {
+      showToast("Текст скопійовано! Відкрийте Viber на телефоні і надішліть боту ltexsendpulse", "#1A3C5E");
     });
-
   } else {
-    // ── Десктоп: копіюємо в буфер + показуємо інструкцію ──
-    copyToClipboard(t, function() {
-      showDesktopInstructions(t);
+    fallbackCopy(t, function() {
+      showToast("Текст скопійовано! Відкрийте Viber на телефоні i надішліть боту ltexsendpulse", "#1A3C5E");
     });
   }
-}
-
-function showDesktopInstructions(text) {
-  // Видаляємо попередній блок якщо є
-  var old = document.getElementById("desktopInstr");
-  if (old) old.remove();
-
-  var box = document.createElement("div");
-  box.id = "desktopInstr";
-  box.style.cssText = [
-    "position:fixed","top:0","left:0","width:100%","height:100%",
-    "background:rgba(0,0,0,.6)","z-index:9998","display:flex",
-    "align-items:center","justify-content:center","padding:20px"
-  ].join(";");
-
-  box.innerHTML = [
-    '<div style="background:#fff;border-radius:16px;padding:24px;max-width:400px;width:100%;',
-    'box-shadow:0 8px 40px rgba(0,0,0,.3);font-family:inherit">',
-    '<div style="font-size:16px;font-weight:700;color:#1A3C5E;margin-bottom:12px">',
-    '📋 Текст скопійовано!</div>',
-    '<div style="font-size:13px;color:#555;line-height:1.6;margin-bottom:16px">',
-    'Щоб надіслати боту:<br>',
-    '1. Відкрий <b>Viber</b> на телефоні<br>',
-    '2. Знайди бота <b>ltexsendpulse</b><br>',
-    '3. Довге натискання у полі вводу → <b>Вставити</b><br>',
-    '4. Натисни <b>Надіслати</b>',
-    '</div>',
-    '<div style="background:#f0f4ff;border-radius:8px;padding:10px;font-size:12px;',
-    'color:#333;white-space:pre-wrap;max-height:150px;overflow-y:auto;margin-bottom:16px;',
-    'line-height:1.5">'+text.replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</div>',
-    '<div style="display:flex;gap:10px">',
-    '<button onclick="document.getElementById('desktopInstr').remove()" ',
-    'style="flex:1;padding:10px;border:1px solid #ddd;border-radius:8px;',
-    'background:#fff;cursor:pointer;font-size:14px;font-weight:600">Закрити</button>',
-    '<button onclick="fallbackCopy(document.getElementById('desktopInstr').querySelector('div[style*=pre-wrap]').textContent, function(){showToast('✅ Скопійовано знову!','#2d6a4f',2000)})" ',
-    'style="flex:1;padding:10px;border:none;border-radius:8px;',
-    'background:#7360f2;color:#fff;cursor:pointer;font-size:14px;font-weight:600">',
-    '📋 Копіювати ще раз</button>',
-    '</div>',
-    '</div>'
-  ].join('');
-
-  // Закрити по кліку на фон
-  box.addEventListener('click', function(e) {
-    if (e.target === box) box.remove();
-  });
-
-  document.body.appendChild(box);
 }
 
 function doClear() {
