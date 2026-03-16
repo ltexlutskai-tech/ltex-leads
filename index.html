@@ -504,26 +504,56 @@ async function doParse() {
     catch(e) { var m = raw.match(/\{[\s\S]*?\}/); p = m ? JSON.parse(m[0]) : null; }
     if (!p) throw new Error("Не вдалось розпізнати відповідь");
     if (p.error) throw new Error(p.error);
-    setF("fn", p.name);   setF("fp", p.phone);
-    setF("fr", p.region); setF("fc", p.city);
+
+    // ── Перевірка: заповнювати поле лише якщо значення є у вихідному тексті ──
+    var rawText = document.getElementById("txt").value;
+    var srcLow  = rawText.toLowerCase();
+    var hasText = srcLow.trim().length > 0;
+
+    // Перевірка текстового значення у джерелі (пропускаємо якщо лише зображення)
+    function inSrc(val) {
+      if (!val || String(val).trim() === "") return false;
+      if (!hasText) return true; // тільки фото — довіряємо AI
+      return srcLow.indexOf(String(val).trim().toLowerCase()) !== -1;
+    }
+    // Перевірка телефону по цифрах (враховує формат 380хх → 0хх)
+    function phoneInSrc(val) {
+      if (!val) return false;
+      if (!hasText) return true;
+      var digs    = String(val).replace(/\D/g, "");
+      var srcDigs = rawText.replace(/\D/g, "");
+      if (digs.length < 9) return false;
+      return srcDigs.indexOf(digs) !== -1 ||
+             srcDigs.indexOf(digs.slice(-10)) !== -1;
+    }
+
+    if (inSrc(p.name))       setF("fn", p.name);
+    if (phoneInSrc(p.phone)) setF("fp", p.phone);
+    if (inSrc(p.region))     setF("fr", p.region);
+    if (inSrc(p.city))       setF("fc", p.city);
+
     // Об'єднуємо interest + contact в одне поле «Цікавить / Коментар»
     var interestParts = [];
-    if (p.interest && String(p.interest).trim()) interestParts.push(String(p.interest).trim());
-    if (p.contact  && String(p.contact).trim())  interestParts.push(String(p.contact).trim());
+    if (p.interest && inSrc(p.interest)) interestParts.push(String(p.interest).trim());
+    if (p.contact  && inSrc(p.contact))  interestParts.push(String(p.contact).trim());
     if (interestParts.length) setF("fi2", interestParts.join(" | "));
+
     // Соціальні посилання: перевіряємо site + tg + додаткові поля
     var socialParts = [];
-    if (p.site && String(p.site).trim()) socialParts.push(String(p.site).trim());
-    if (p.tg   && String(p.tg).trim())   socialParts.push(String(p.tg).trim());
+    if (p.site && inSrc(p.site)) socialParts.push(String(p.site).trim());
+    if (p.tg   && inSrc(p.tg))   socialParts.push(String(p.tg).trim());
     // Витягуємо соцмережні URL з тексту заявки якщо не знайдено в полях
-    var rawText = document.getElementById("txt").value;
     var socialRe = /https?:\/\/(www\.)?(t\.me|telegram\.me|instagram\.com|tiktok\.com|fb\.com|facebook\.com|youtube\.com|viber\.com)[^\s"')>]*/gi;
     var found; while ((found = socialRe.exec(rawText)) !== null) {
       var url = found[0].replace(/[.,;!?]+$/, "");
       if (socialParts.indexOf(url) === -1) socialParts.push(url);
     }
     if (socialParts.length) setF("fs", socialParts.join(" | "));
-    setF("fcat", p.category); setF("fch", p.channel);
+
+    // Канал — класифікація, AI може висновувати з контексту
+    // Категорія — тільки якщо є у вихідному тексті
+    if (inSrc(p.category)) setF("fcat", p.category);
+    setF("fch", p.channel);
     if (p.date) document.getElementById("fd").value = p.date;
     var n = [p.name, p.phone, p.region, p.city].filter(Boolean).length;
     setSt("Готово — " + n + " полів заповнено", "ok");
