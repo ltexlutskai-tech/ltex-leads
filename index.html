@@ -6,51 +6,278 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="L-TEX Leads">
-<meta name="theme-color" content="#1A3C5E">
+<meta name="theme-color" content="#0f1923">
 <title>L-TEX | Парсер лідів</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-:root{--bg:#f8f9fa;--card:#fff;--border:#dee2e6;--text:#212529;--muted:#6c757d;--blue:#1A3C5E;--blue-l:#2E6DA4;--blue-bg:#e8f0f8;--green:#2d6a4f;--red:#c0392b;--r:12px;--rs:8px}
-@media(prefers-color-scheme:dark){:root{--bg:#0f1117;--card:#1a1d23;--border:#2d3139;--text:#e8eaed;--muted:#9aa0a6;--blue-bg:#1a2a3a}}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding-bottom:60px}
-.hdr{background:var(--blue);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2)}
-.hdr-i{max-width:700px;margin:0 auto;display:flex;align-items:center;gap:10px}
-.logo{width:32px;height:32px;background:rgba(255,255,255,.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0}
-.hdr h1{font-size:16px;font-weight:600}
-.hdr p{font-size:11px;opacity:.7;margin-top:1px}
-.wrap{max-width:700px;margin:0 auto;padding:12px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:12px}
-.ct{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.8px}
-label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;margin-top:10px;font-weight:500}
+
+:root{
+  --bg:#0f1923;
+  --surface:#162030;
+  --surface2:#1c2a3a;
+  --border:#243346;
+  --border2:#2e4058;
+  --text:#e8f0f8;
+  --muted:#6b8aaa;
+  --accent:#3b82f6;
+  --accent2:#60a5fa;
+  --accent-glow:rgba(59,130,246,.18);
+  --green:#10b981;
+  --green-glow:rgba(16,185,129,.15);
+  --red:#ef4444;
+  --gold:#f59e0b;
+  --r:14px;
+  --rs:10px;
+  --font:'Outfit',sans-serif;
+}
+
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font);
+  min-height:100vh;
+  padding-bottom:80px;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59,130,246,.12) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 30% at 90% 80%, rgba(16,185,129,.07) 0%, transparent 50%);
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.hdr{
+  background:rgba(15,25,35,.85);
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+  padding:14px 20px;
+  position:sticky;
+  top:0;
+  z-index:100;
+}
+.hdr-i{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:14px}
+.logo{
+  width:38px;height:38px;
+  background:linear-gradient(135deg,#1d4ed8,#3b82f6);
+  border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:13px;color:#fff;
+  flex-shrink:0;
+  box-shadow:0 4px 16px rgba(59,130,246,.35);
+}
+.hdr-txt h1{font-size:17px;font-weight:600;letter-spacing:-.2px}
+.hdr-txt p{font-size:11px;color:var(--muted);margin-top:1px;font-weight:400}
+
+/* ── Layout ─────────────────────────────────────────────── */
+.wrap{max-width:760px;margin:0 auto;padding:20px 16px;display:flex;flex-direction:column;gap:16px}
+
+/* ── Cards ──────────────────────────────────────────────── */
+.card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  padding:20px;
+  position:relative;
+  overflow:hidden;
+}
+.card::before{
+  content:'';
+  position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(59,130,246,.3),transparent);
+}
+.card-title{
+  font-size:10px;font-weight:700;
+  color:var(--muted);
+  text-transform:uppercase;
+  letter-spacing:1.2px;
+  margin-bottom:16px;
+  display:flex;align-items:center;gap:8px;
+}
+.card-title::after{
+  content:'';flex:1;height:1px;
+  background:linear-gradient(90deg,var(--border),transparent);
+}
+
+/* ── Input grid ─────────────────────────────────────────── */
+.input-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:540px){.input-row{grid-template-columns:1fr}}
+
+label{
+  display:block;
+  font-size:11px;font-weight:500;
+  color:var(--muted);
+  margin-bottom:6px;margin-top:14px;
+  letter-spacing:.3px;
+}
 label:first-of-type{margin-top:0}
-input,select,textarea{width:100%;font-family:inherit;font-size:15px;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;outline:none;-webkit-appearance:none;transition:border-color .15s}
-input:focus,select:focus,textarea:focus{border-color:var(--blue-l)}
-textarea{resize:vertical;min-height:80px;line-height:1.5}
-select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23666' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
-.ia{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-@media(max-width:520px){.ia{grid-template-columns:1fr}}
-.dz{border:2px dashed var(--border);border-radius:var(--rs);padding:20px;text-align:center;cursor:pointer;min-height:110px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;background:var(--bg);transition:all .15s}
-.dz:hover{border-color:var(--blue-l);background:var(--blue-bg)}
-.dz-icon{font-size:28px;opacity:.4}
-#imgPrev{max-width:100%;border-radius:var(--rs);margin-top:8px;display:none}
-.br{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:11px 18px;border-radius:var(--rs);border:none;cursor:pointer;font-size:14px;font-family:inherit;font-weight:600;transition:all .15s;white-space:nowrap}
-.btn:active{transform:scale(.97)}
-.bb{background:var(--blue);color:#fff}
-.bb:disabled{opacity:.6;cursor:not-allowed;transform:none}
-.bg{background:var(--green);color:#fff;width:100%}
-.bv{background:#7360f2;color:#fff;width:100%;margin-top:10px;display:none}
-.bc{background:#eee;color:#333}
-.st{font-size:13px;color:var(--muted)}
-.ok{color:var(--green)}.err{color:var(--red)}
-.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-@media(max-width:520px){.g2{grid-template-columns:1fr}}
-.out{background:var(--blue-bg);border:1px solid var(--blue-l);border-radius:var(--rs);padding:14px;white-space:pre-wrap;font-size:14px;cursor:pointer;min-height:60px;line-height:1.7;color:var(--text)}
-.ch{font-size:11px;color:var(--muted);text-align:center;margin-top:6px}
-.dv{height:1px;background:var(--border);margin:14px 0}
+
 .req{color:var(--red);margin-left:2px}
-.sp{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:4px}
+
+input,select,textarea{
+  width:100%;
+  font-family:var(--font);
+  font-size:14px;
+  color:var(--text);
+  background:var(--surface2);
+  border:1px solid var(--border);
+  border-radius:var(--rs);
+  padding:11px 14px;
+  outline:none;
+  -webkit-appearance:none;
+  transition:border-color .2s, box-shadow .2s, background .2s;
+}
+input:focus,select:focus,textarea:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-glow);
+  background:rgba(28,42,58,.8);
+}
+input::placeholder,textarea::placeholder{color:var(--muted);opacity:.6}
+textarea{resize:vertical;min-height:80px;line-height:1.6}
+
+select{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b8aaa' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right 14px center;
+  padding-right:36px;
+  cursor:pointer;
+}
+select option{background:#162030}
+
+/* ── Drop zone ──────────────────────────────────────────── */
+.dz{
+  border:1.5px dashed var(--border2);
+  border-radius:var(--rs);
+  padding:28px 20px;
+  text-align:center;
+  cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  background:var(--surface2);
+  transition:all .2s;
+  min-height:120px;
+}
+.dz:hover,.dz.drag{
+  border-color:var(--accent);
+  background:var(--accent-glow);
+  box-shadow:0 0 0 3px var(--accent-glow);
+}
+.dz-icon{font-size:32px;opacity:.5;line-height:1}
+.dz p{font-size:13px;color:var(--muted);font-weight:500}
+.dz small{font-size:11px;color:var(--muted);opacity:.6}
+#imgPrev{max-width:100%;border-radius:var(--rs);margin-top:10px;display:none;border:1px solid var(--border)}
+
+/* ── Buttons ─────────────────────────────────────────────── */
+.btn-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px}
+
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  padding:11px 20px;
+  border-radius:var(--rs);
+  border:none;cursor:pointer;
+  font-size:14px;font-family:var(--font);font-weight:600;
+  transition:all .18s;
+  white-space:nowrap;
+  position:relative;
+  overflow:hidden;
+}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+.btn-primary{
+  background:linear-gradient(135deg,#1d4ed8,#3b82f6);
+  color:#fff;
+  box-shadow:0 4px 16px rgba(59,130,246,.3);
+}
+.btn-primary:hover:not(:disabled){
+  box-shadow:0 6px 24px rgba(59,130,246,.45);
+  transform:translateY(-1px);
+}
+
+.btn-ghost{
+  background:var(--surface2);
+  color:var(--muted);
+  border:1px solid var(--border);
+}
+.btn-ghost:hover{background:var(--border);color:var(--text)}
+
+.btn-green{
+  background:linear-gradient(135deg,#059669,#10b981);
+  color:#fff;
+  width:100%;
+  box-shadow:0 4px 16px rgba(16,185,129,.25);
+}
+.btn-green:hover{box-shadow:0 6px 24px rgba(16,185,129,.4);transform:translateY(-1px)}
+
+.btn-viber{
+  background:linear-gradient(135deg,#5b21b6,#7c3aed);
+  color:#fff;
+  width:100%;
+  box-shadow:0 4px 16px rgba(124,58,237,.3);
+  display:none;
+  margin-top:12px;
+}
+.btn-viber:hover{box-shadow:0 6px 24px rgba(124,58,237,.45);transform:translateY(-1px)}
+
+/* ── Status ──────────────────────────────────────────────── */
+.status{font-size:13px;color:var(--muted);font-weight:500}
+.status.ok{color:var(--green)}
+.status.err{color:var(--red)}
+
+/* ── Spinner ─────────────────────────────────────────────── */
+.sp{
+  display:inline-block;width:14px;height:14px;
+  border:2px solid rgba(255,255,255,.25);
+  border-top-color:#fff;
+  border-radius:50%;
+  animation:spin .65s linear infinite;
+  vertical-align:middle;
+}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Two column grid ─────────────────────────────────────── */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:540px){.two-col{grid-template-columns:1fr}}
+
+/* ── Output template ─────────────────────────────────────── */
+.output-box{
+  background:var(--surface2);
+  border:1px solid var(--border2);
+  border-radius:var(--rs);
+  padding:16px;
+  white-space:pre-wrap;
+  font-size:14px;
+  line-height:1.8;
+  cursor:pointer;
+  min-height:70px;
+  color:var(--text);
+  font-family:var(--font);
+  transition:border-color .2s, box-shadow .2s;
+  position:relative;
+}
+.output-box:hover{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.output-box.empty{color:var(--muted);font-style:italic}
+
+.copy-hint{
+  font-size:11px;color:var(--muted);
+  text-align:center;margin-top:8px;
+  transition:color .2s;
+}
+
+/* ── Divider ─────────────────────────────────────────────── */
+.divider{height:1px;background:var(--border);margin:16px 0}
+
+/* ── Toast ───────────────────────────────────────────────── */
+#ltToast{
+  position:fixed;bottom:24px;left:50%;
+  transform:translateX(-50%);
+  color:#fff;padding:13px 22px;
+  border-radius:12px;font-size:14px;font-weight:600;
+  z-index:9999;text-align:center;
+  max-width:340px;width:90%;line-height:1.5;
+  box-shadow:0 8px 32px rgba(0,0,0,.4);
+  display:none;
+  font-family:var(--font);
+  animation:slideUp .25s ease;
+}
+@keyframes slideUp{from{transform:translateX(-50%) translateY(20px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
 </style>
 </head>
 <body>
@@ -58,7 +285,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 <div class="hdr">
   <div class="hdr-i">
     <div class="logo">LT</div>
-    <div>
+    <div class="hdr-txt">
       <h1>L-TEX Парсер лідів</h1>
       <p>Розпізнавання заявок через AI</p>
     </div>
@@ -66,34 +293,44 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 </div>
 
 <div class="wrap">
+
+  <!-- Вхідні дані -->
   <div class="card">
-    <div class="ct">Вхідні дані</div>
-    <div class="ia">
+    <div class="card-title">Вхідні дані</div>
+    <div class="input-row">
       <div>
         <label>Текст заявки</label>
-        <textarea id="txt" placeholder="Вставте текст листа, OLX, Viber..." style="min-height:130px"></textarea>
+        <textarea id="txt" placeholder="Вставте текст листа, OLX, Viber, Formspree..." style="min-height:140px"></textarea>
       </div>
       <div>
         <label>Скріншот</label>
-        <div class="dz" id="dz" onclick="document.getElementById('fi').click()">
-          <div class="dz-icon">+</div>
-          <p style="font-size:13px;color:var(--muted)">Натисніть або перетягніть</p>
-          <small style="font-size:11px;color:var(--muted)">PNG, JPG</small>
+        <div class="dz" id="dz"
+          onclick="document.getElementById('fi').click()"
+          ondragover="event.preventDefault();this.classList.add('drag')"
+          ondragleave="this.classList.remove('drag')"
+          ondrop="this.classList.remove('drag');if(event.dataTransfer.files[0])loadImg(event.dataTransfer.files[0]);event.preventDefault()">
+          <div class="dz-icon">📎</div>
+          <p>Натисніть або перетягніть</p>
+          <small>PNG, JPG до 5MB</small>
         </div>
         <input type="file" id="fi" accept="image/*" style="display:none" onchange="onImg(this)">
         <img id="imgPrev">
       </div>
     </div>
-    <div class="br">
-      <button class="btn bb" onclick="doParse()" id="pb">Розпізнати через AI</button>
-      <button class="btn bc" onclick="doClear()">Очистити</button>
-      <span class="st" id="st"></span>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="doParse()" id="pb">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Розпізнати через AI
+      </button>
+      <button class="btn btn-ghost" onclick="doClear()">Очистити</button>
+      <span class="status" id="st"></span>
     </div>
   </div>
 
-  <div class="g2">
+  <!-- Дані клієнта + Класифікація -->
+  <div class="two-col">
     <div class="card">
-      <div class="ct">Дані клієнта</div>
+      <div class="card-title">Дані клієнта</div>
       <label>Ім'я<span class="req">*</span></label>
       <input id="fn" data-label="Ім'я" placeholder="Прізвище Ім'я" autocomplete="off">
       <label>Телефон<span class="req">*</span></label>
@@ -103,25 +340,35 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       <label>Місто</label>
       <input id="fc" data-label="Місто" placeholder="Київ">
       <label>Цікавить</label>
-      <textarea id="fi2" data-label="Цікавить" style="min-height:60px"></textarea>
+      <textarea id="fi2" data-label="Цікавить" style="min-height:64px"></textarea>
       <label>Контакт / Коментар</label>
-      <textarea id="fco" data-label="Контакт" style="min-height:60px"></textarea>
+      <textarea id="fco" data-label="Контакт" style="min-height:64px"></textarea>
     </div>
     <div class="card">
-      <div class="ct">Класифікація</div>
+      <div class="card-title">Класифікація</div>
       <label>Категорія ТТ</label>
       <select id="fcat" data-label="Категорія">
         <option value=""></option>
-        <option>Інтернет</option><option>Магазин</option><option>Хоче почати</option>
-        <option>TikTok/Ефір</option><option>Ринок стаціонарний</option>
-        <option>Для себе</option><option>Виїздна торгівля</option>
+        <option>Інтернет</option>
+        <option>Магазин</option>
+        <option>Хоче почати</option>
+        <option>TikTok/Ефір</option>
+        <option>Ринок стаціонарний</option>
+        <option>Для себе</option>
+        <option>Виїздна торгівля</option>
       </select>
       <label>Канал пошуку</label>
       <select id="fch" data-label="Канал">
         <option value=""></option>
-        <option>TikTok</option><option>TikTok Ефір</option><option>Google</option>
-        <option>OLX</option><option>Instagram</option><option>YouTube</option>
-        <option>bricabrac</option><option>Рекомендація</option><option>Інше</option>
+        <option>TikTok</option>
+        <option>TikTok Ефір</option>
+        <option>Google</option>
+        <option>OLX</option>
+        <option>Instagram</option>
+        <option>YouTube</option>
+        <option>bricabrac</option>
+        <option>Рекомендація</option>
+        <option>Інше</option>
       </select>
       <label>Дата</label>
       <input type="date" id="fd" data-label="Дата">
@@ -136,39 +383,54 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       </select>
       <label>Посилання на сторінку</label>
       <input id="fs" data-label="Посилання" placeholder="https://...">
-      <div class="dv"></div>
-      <button class="btn bg" onclick="doGen()">Сформувати шаблон</button>
+      <div class="divider"></div>
+      <button class="btn btn-green" onclick="doGen()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Сформувати шаблон
+      </button>
     </div>
   </div>
 
+  <!-- Готовий шаблон -->
   <div class="card">
-    <div class="ct">Готовий шаблон для бота</div>
-    <div class="out" id="out" onclick="doCopy()">Заповніть поля і натисніть Сформувати шаблон</div>
-    <p class="ch" id="ch">Натисніть щоб скопіювати</p>
-    <button class="btn bv" id="vBtn" onclick="shareViber()" style="display:none">Поділитись у Viber</button>
+    <div class="card-title">Готовий шаблон для бота</div>
+    <div class="output-box empty" id="out" onclick="doCopy()">Заповніть поля і натисніть «Сформувати шаблон»</div>
+    <p class="copy-hint" id="ch">Натисніть щоб скопіювати</p>
+    <button class="btn btn-viber" id="vBtn" onclick="shareViber()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 16.612c-.2.56-.983 1.01-1.616 1.144-.447.09-.883.09-1.32-.032-2.03-.56-3.94-1.482-5.57-2.84-1.554-1.293-2.74-2.88-3.49-4.72-.28-.69-.56-1.414-.56-2.16 0-.643.19-1.173.598-1.59.35-.36.755-.53 1.17-.53.16 0 .322.033.467.098.35.15.644.44.836.814l1.04 2.12c.17.34.21.71.11 1.07-.1.35-.3.64-.56.86l-.56.47c.02.08.05.16.08.23.58 1.16 1.4 2.17 2.41 2.96.3.23.62.44.94.62l.5-.56c.22-.25.52-.42.85-.46.34-.04.69.02 1.0.19l2.0 1.05c.37.19.65.49.79.85z"/></svg>
+      Надіслати у Viber
+    </button>
   </div>
+
 </div>
 
-<script>
-// ── Налаштування ──────────────────────────────────────────
-// Вставте URL свого Cloudflare Worker після створення
-var WORKER_URL = "https://bitter-violet-59acltex-leads-proxy.ltex-lutsk-ai.workers.dev/";
-// ─────────────────────────────────────────────────────────
+<div id="ltToast"></div>
 
-var b64 = null;
+<script>
+// ══════════════════════════════════════════════════════════
+// НАЛАШТУВАННЯ
+// ══════════════════════════════════════════════════════════
+var WORKER_URL    = "https://bitter-violet-59acltex-leads-proxy.ltex-lutsk-ai.workers.dev/";
+var VIBER_BOT_URI = "ltexsendpulse";
+// ══════════════════════════════════════════════════════════
+
+var b64  = null;
 var mime = "image/jpeg";
 document.getElementById("fd").value = new Date().toISOString().split("T")[0];
 
+// ── Статус ────────────────────────────────────────────────
 function setSt(m, t, sp) {
   var e = document.getElementById("st");
-  if (sp) { e.innerHTML = "<span class='sp'></span>" + m; }
-  else { e.textContent = m; }
-  e.className = "st " + (t || "");
+  if (sp) { e.innerHTML = "<span class='sp'></span> " + m; }
+  else     { e.textContent = m; }
+  e.className = "status" + (t ? " " + t : "");
 }
 
+// ── Заповнення поля ───────────────────────────────────────
 function setF(id, v) {
   if (!v || String(v).trim() === "" || v === "null") return;
-  var el = document.getElementById(id); if (!el) return;
+  var el = document.getElementById(id);
+  if (!el) return;
   var val = String(v).trim();
   if (el.tagName === "SELECT") {
     for (var i = 0; i < el.options.length; i++) {
@@ -181,12 +443,13 @@ function setF(id, v) {
   } else { el.value = val; }
 }
 
+// ── Зображення ────────────────────────────────────────────
 function onImg(inp) { if (inp.files[0]) loadImg(inp.files[0]); }
 
 function loadImg(f) {
+  if (!f.type.startsWith("image/")) { setSt("Тільки PNG/JPG", "err"); return; }
   var reader = new FileReader();
   reader.onload = function(e) {
-    // Стискаємо зображення до 1024px
     var img = new Image();
     img.onload = function() {
       var canvas = document.createElement("canvas");
@@ -194,23 +457,24 @@ function loadImg(f) {
       var w = img.width, h = img.height;
       if (w > MAX || h > MAX) {
         if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
-        else { w = Math.round(w * MAX / h); h = MAX; }
+        else       { w = Math.round(w * MAX / h); h = MAX; }
       }
       canvas.width = w; canvas.height = h;
       canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-      var compressed = canvas.toDataURL("image/jpeg", 0.75);
-      b64 = compressed.split(",")[1];
+      var comp = canvas.toDataURL("image/jpeg", 0.78);
+      b64  = comp.split(",")[1];
       mime = "image/jpeg";
       var p = document.getElementById("imgPrev");
-      p.src = compressed; p.style.display = "block";
+      p.src = comp; p.style.display = "block";
       document.getElementById("dz").style.display = "none";
-      setSt("Зображення завантажено", "ok");
+      setSt("Зображення готове", "ok");
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(f);
 }
 
+// ── AI парсинг ────────────────────────────────────────────
 async function doParse() {
   var text = document.getElementById("txt").value.trim();
   if (!text && !b64) { setSt("Вставте текст або скріншот", "err"); return; }
@@ -218,13 +482,12 @@ async function doParse() {
   btn.disabled = true;
   setSt("Розпізнаємо...", "", true);
 
-  // Таймаут 30 секунд
   var timedOut = false;
   var timeout = setTimeout(function() {
     timedOut = true;
     btn.disabled = false;
-    setSt("Час вийшов. Спробуй ще раз.", "err");
-  }, 30000);
+    setSt("Час вийшов. Спробуйте ще раз.", "err");
+  }, 35000);
 
   try {
     var resp = await fetch(WORKER_URL, {
@@ -241,7 +504,7 @@ async function doParse() {
     catch(e) { var m = raw.match(/\{[\s\S]*?\}/); p = m ? JSON.parse(m[0]) : null; }
     if (!p) throw new Error("Не вдалось розпізнати відповідь");
     if (p.error) throw new Error(p.error);
-    setF("fn", p.name); setF("fp", p.phone);
+    setF("fn", p.name);   setF("fp", p.phone);
     setF("fr", p.region); setF("fc", p.city);
     setF("fi2", p.interest); setF("fco", p.contact);
     setF("fs", p.site); setF("fcat", p.category); setF("fch", p.channel);
@@ -255,140 +518,115 @@ async function doParse() {
   }
 }
 
+// ── Формування шаблону ────────────────────────────────────
 function doGen() {
   var ids = ["fn","fp","fr","fc","fcat","fch","fi2","fco","fs","fd","fm"];
-  var name = document.getElementById("fn").value.trim();
+  var name  = document.getElementById("fn").value.trim();
   var phone = document.getElementById("fp").value.trim();
-  var mgr = document.getElementById("fm").value.trim();
-  if (!name) { setSt("Вкажіть ім'я клієнта", "err"); return; }
+  var mgr   = document.getElementById("fm").value.trim();
+  if (!name)  { setSt("Вкажіть ім'я клієнта", "err"); return; }
   if (!phone) { setSt("Вкажіть телефон", "err"); return; }
-  if (!mgr) { setSt("Оберіть менеджера", "err"); return; }
+  if (!mgr)   { setSt("Оберіть менеджера", "err"); return; }
   var L = [];
   for (var i = 0; i < ids.length; i++) {
-    var el = document.getElementById(ids[i]); if (!el) continue;
+    var el  = document.getElementById(ids[i]); if (!el) continue;
     var lbl = el.getAttribute("data-label");
     var val = el.value.trim();
     if (!val || !lbl) continue;
     if (ids[i] === "fd") { var pts = val.split("-"); val = pts[2]+"."+pts[1]+"."+pts[0]; }
     L.push(lbl + ": " + val);
   }
-  document.getElementById("out").textContent = L.join("\n");
+  var box = document.getElementById("out");
+  box.textContent = L.join("\n");
+  box.classList.remove("empty");
   document.getElementById("ch").textContent = "Натисніть щоб скопіювати";
-  document.getElementById("vBtn").style.display = "block";
+  document.getElementById("vBtn").style.display = "flex";
   setSt("", "");
 }
 
+// ── Копіювання ────────────────────────────────────────────
 function doCopy() {
   var t = document.getElementById("out").textContent;
-  if (!t || t.indexOf("Заповніть") !== -1) return;
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(t).then(function() {
-      document.getElementById("ch").textContent = "Скопійовано!";
-      setTimeout(function() { document.getElementById("ch").textContent = "Натисніть щоб скопіювати"; }, 2000);
-    });
-  }
+  if (!t || document.getElementById("out").classList.contains("empty")) return;
+  copyToClipboard(t, function() {
+    document.getElementById("ch").textContent = "✓ Скопійовано!";
+    setTimeout(function() {
+      document.getElementById("ch").textContent = "Натисніть щоб скопіювати";
+    }, 2000);
+  });
 }
 
-var VIBER_BOT_URI = "ltexsendpulse";
-
-function isMobile() {
-  return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
+// ── Clipboard утиліти ─────────────────────────────────────
+function copyToClipboard(text, callback) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(callback).catch(function() {
+      fallbackCopy(text, callback);
+    });
+  } else {
+    fallbackCopy(text, callback);
+  }
 }
 
 function fallbackCopy(text, callback) {
   var ta = document.createElement("textarea");
   ta.value = text;
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
+  ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0";
   document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  try { document.execCommand("copy"); } catch(err) {}
+  ta.focus(); ta.select();
+  try { document.execCommand("copy"); } catch(e) {}
   document.body.removeChild(ta);
   if (callback) callback();
 }
 
+// ── Toast ─────────────────────────────────────────────────
 function showToast(msg, color) {
   var toast = document.getElementById("ltToast");
-  if (!toast) {
-    toast = document.createElement("div");
-    toast.id = "ltToast";
-    toast.style.position = "fixed";
-    toast.style.bottom = "80px";
-    toast.style.left = "50%";
-    toast.style.transform = "translateX(-50%)";
-    toast.style.color = "#fff";
-    toast.style.padding = "13px 20px";
-    toast.style.borderRadius = "12px";
-    toast.style.fontSize = "14px";
-    toast.style.fontWeight = "600";
-    toast.style.zIndex = "9999";
-    toast.style.textAlign = "center";
-    toast.style.maxWidth = "320px";
-    toast.style.width = "90%";
-    toast.style.lineHeight = "1.5";
-    toast.style.boxShadow = "0 4px 20px rgba(0,0,0,.35)";
-    document.body.appendChild(toast);
-  }
-  toast.style.background = color || "#7360f2";
+  toast.style.background = color || "#5b21b6";
   toast.textContent = msg;
   toast.style.display = "block";
   clearTimeout(toast._t);
   toast._t = setTimeout(function() { toast.style.display = "none"; }, 5000);
 }
 
+// ── Viber ─────────────────────────────────────────────────
 function shareViber() {
   var t = document.getElementById("out").textContent;
-  if (!t || t.indexOf("Заповніть") !== -1) return;
+  if (!t || document.getElementById("out").classList.contains("empty")) return;
 
   var deepLink = "viber://pa?chatURI=" + VIBER_BOT_URI + "&text=" + encodeURIComponent(t);
 
   if (deepLink.length <= 2000) {
-    // Відкриваємо Viber з текстом — працює і на телефоні і на ПК
+    // Відкриваємо Viber з текстом — один тап Надіслати (телефон і ПК)
     window.location.href = deepLink;
   } else {
     // Текст задовгий — копіюємо і відкриваємо чат
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(t).then(function() {
-        showToast("Скопійовано! Вставте боту у Viber", "#7360f2");
-        setTimeout(function() {
-          window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
-        }, 700);
-      });
-    } else {
-      fallbackCopy(t, function() {
-        showToast("Скопійовано! Вставте боту у Viber", "#7360f2");
-        setTimeout(function() {
-          window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
-        }, 700);
-      });
-    }
-  }
-}
-
-  // Desktop
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(t).then(function() {
-      showToast("Текст скопійовано! Відкрийте Viber на телефоні і надішліть боту ltexsendpulse", "#1A3C5E");
-    });
-  } else {
-    fallbackCopy(t, function() {
-      showToast("Текст скопійовано! Відкрийте Viber на телефоні i надішліть боту ltexsendpulse", "#1A3C5E");
+    copyToClipboard(t, function() {
+      showToast("Скопійовано! Вставте боту у Viber (довге натискання → Вставити)", "#5b21b6");
+      setTimeout(function() {
+        window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
+      }, 800);
     });
   }
 }
 
+// ── Очистити ──────────────────────────────────────────────
 function doClear() {
-  document.getElementById("txt").value = ""; b64 = null;
-  var p = document.getElementById("imgPrev"); p.style.display = "none"; p.src = "";
+  document.getElementById("txt").value = "";
+  b64 = null;
+  var p = document.getElementById("imgPrev");
+  p.style.display = "none"; p.src = "";
   document.getElementById("fi").value = "";
   document.getElementById("dz").style.display = "";
-  var ids2 = ["fn","fp","fr","fc","fi2","fco","fs"];
-  for (var i = 0; i < ids2.length; i++) document.getElementById(ids2[i]).value = "";
-  var sels = ["fcat","fch","fm"];
-  for (var j = 0; j < sels.length; j++) document.getElementById(sels[j]).selectedIndex = 0;
+  ["fn","fp","fr","fc","fi2","fco","fs"].forEach(function(id) {
+    document.getElementById(id).value = "";
+  });
+  ["fcat","fch","fm"].forEach(function(id) {
+    document.getElementById(id).selectedIndex = 0;
+  });
   document.getElementById("fd").value = new Date().toISOString().split("T")[0];
-  document.getElementById("out").textContent = "Заповніть поля і натисніть Сформувати шаблон";
+  var box = document.getElementById("out");
+  box.textContent = "Заповніть поля і натисніть «Сформувати шаблон»";
+  box.classList.add("empty");
   document.getElementById("vBtn").style.display = "none";
   setSt("", "");
 }
