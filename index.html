@@ -340,7 +340,7 @@ select option{background:#162030}
       <label>Місто</label>
       <input id="fc" data-label="Місто" placeholder="Київ">
       <label>Цікавить / Коментар</label>
-      <textarea id="fi2" data-label="Цікавить" style="min-height:110px" placeholder="Товар, артикул, код, посилання на запит, побажання..."></textarea>
+      <textarea id="fi2" data-label="Цікавить" style="min-height:160px" placeholder="Товар, артикул, код, посилання на запит, побажання... (після парсингу сюди потрапить весь вихідний текст)"></textarea>
     </div>
     <div class="card">
       <div class="card-title">Класифікація</div>
@@ -506,11 +506,34 @@ async function doParse() {
     if (p.error) throw new Error(p.error);
     setF("fn", p.name);   setF("fp", p.phone);
     setF("fr", p.region); setF("fc", p.city);
-    // Об'єднуємо interest + contact в одне поле «Цікавить / Коментар»
+    // Поле «Цікавить / Коментар»:
+    // 1) AI-витяжка (interest + contact)
+    // 2) Розділювач
+    // 3) Весь сирий текст заявки без змін
     var interestParts = [];
     if (p.interest && String(p.interest).trim()) interestParts.push(String(p.interest).trim());
     if (p.contact  && String(p.contact).trim())  interestParts.push(String(p.contact).trim());
-    if (interestParts.length) setF("fi2", interestParts.join(" | "));
+
+    var rawInput = document.getElementById("txt").value.trim();
+    var hasImage = !!b64;
+
+    var fullComment = "";
+    if (interestParts.length) {
+      fullComment += interestParts.join(" | ");
+    }
+    // Додаємо сирий текст якщо є
+    if (rawInput) {
+      if (fullComment) fullComment += "\n\n── Вихідний текст ──\n";
+      fullComment += rawInput;
+    }
+    // Позначаємо наявність скріншоту
+    if (hasImage) {
+      if (fullComment) fullComment += "\n";
+      fullComment += "📎 [скріншот додано]";
+    }
+    if (fullComment) {
+      document.getElementById("fi2").value = fullComment;
+    }
     // Соціальні посилання: перевіряємо site + tg + додаткові поля
     var socialParts = [];
     if (p.site && String(p.site).trim()) socialParts.push(String(p.site).trim());
