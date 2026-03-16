@@ -289,10 +289,70 @@ function doCopy() {
   }
 }
 
+// ─── НАЛАШТУВАННЯ: вкажи URI свого Viber бота ───────────
+// Як знайти URI: Viber → Мої боти → твій бот → "Публічна сторінка" → URI
+// Або запусти в Apps Script: Logger.log(getViberBotUri())
+// Приклад: якщо посилання viber.com/ltexcrm → URI = "ltexcrm"
+var VIBER_BOT_URI = "YOUR_BOT_URI_HERE";
+// ─────────────────────────────────────────────────────────
+
 function shareViber() {
   var t = document.getElementById("out").textContent;
   if (!t || t.indexOf("Заповніть") !== -1) return;
-  window.location.href = "viber://forward?text=" + encodeURIComponent(t);
+
+  if (!VIBER_BOT_URI || VIBER_BOT_URI === "YOUR_BOT_URI_HERE") {
+    // Якщо URI не вказано — fallback: копіюємо + відкриваємо Viber
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(t).then(function() {
+        showToast("✅ Скопійовано! Відкриваємо Viber — вставте вручну (довге натискання → Вставити)", "#e67e22");
+        setTimeout(function(){ window.location.href = "viber://"; }, 400);
+      });
+    }
+    return;
+  }
+
+  // Viber PA deep link — відкриває чат з ботом, текст вже вставлено
+  // Користувачу залишається лише натиснути "Надіслати" (один тап)
+  var encoded = encodeURIComponent(t);
+  var deepLink = "viber://pa?chatURI=" + VIBER_BOT_URI + "&text=" + encoded;
+
+  // Перевіряємо довжину — якщо текст надто довгий для URL, ділимо на частини
+  if (deepLink.length > 2000) {
+    // Текст занадто довгий — копіюємо + відкриваємо чат без тексту
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(t).then(function() {
+        showToast("✅ Текст скопійовано! У Viber натисніть довге натискання → Вставити", "#7360f2");
+        setTimeout(function(){
+          window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
+        }, 400);
+      });
+    }
+    return;
+  }
+
+  // Нормальна довжина — відкриваємо з текстом одразу
+  window.location.href = deepLink;
+}
+
+function showToast(msg, color) {
+  var toast = document.getElementById("viberToast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "viberToast";
+    toast.style.cssText = [
+      "position:fixed","bottom:84px","left:50%","transform:translateX(-50%)",
+      "color:#fff","padding:14px 20px","border-radius:12px","font-size:13px",
+      "font-weight:600","z-index:9999","text-align:center","line-height:1.5",
+      "box-shadow:0 4px 20px rgba(0,0,0,.3)","max-width:320px","width:90%"
+    ].join(";");
+    document.body.appendChild(toast);
+  }
+  toast.style.background = color || "#7360f2";
+  toast.textContent = msg;
+  toast.style.opacity = "1";
+  toast.style.display = "block";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function() { toast.style.display = "none"; }, 5000);
 }
 
 function doClear() {
