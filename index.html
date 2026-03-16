@@ -338,6 +338,33 @@ function showToast(msg, color) {
 }
 
 function shareViber() {
+  var t = document.getElementById("out").textContent;
+  if (!t || t.indexOf("Заповніть") !== -1) return;
+
+  var deepLink = "viber://pa?chatURI=" + VIBER_BOT_URI + "&text=" + encodeURIComponent(t);
+
+  if (deepLink.length <= 2000) {
+    // Відкриваємо Viber з текстом — працює і на телефоні і на ПК
+    window.location.href = deepLink;
+  } else {
+    // Текст задовгий — копіюємо і відкриваємо чат
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(t).then(function() {
+        showToast("Скопійовано! Вставте боту у Viber", "#7360f2");
+        setTimeout(function() {
+          window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
+        }, 700);
+      });
+    } else {
+      fallbackCopy(t, function() {
+        showToast("Скопійовано! Вставте боту у Viber", "#7360f2");
+        setTimeout(function() {
+          window.location.href = "viber://pa?chatURI=" + VIBER_BOT_URI;
+        }, 700);
+      });
+    }
+  }
+}
 
   // Desktop
   if (navigator.clipboard && window.isSecureContext) {
