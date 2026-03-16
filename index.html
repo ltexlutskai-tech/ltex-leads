@@ -339,10 +339,8 @@ select option{background:#162030}
       <input id="fr" data-label="Область" placeholder="Київська">
       <label>Місто</label>
       <input id="fc" data-label="Місто" placeholder="Київ">
-      <label>Цікавить</label>
-      <textarea id="fi2" data-label="Цікавить" style="min-height:64px"></textarea>
-      <label>Контакт / Коментар</label>
-      <textarea id="fco" data-label="Контакт" style="min-height:64px"></textarea>
+      <label>Цікавить / Коментар</label>
+      <textarea id="fi2" data-label="Цікавить" style="min-height:110px" placeholder="Товар, артикул, код, посилання на запит, побажання..."></textarea>
     </div>
     <div class="card">
       <div class="card-title">Класифікація</div>
@@ -508,8 +506,24 @@ async function doParse() {
     if (p.error) throw new Error(p.error);
     setF("fn", p.name);   setF("fp", p.phone);
     setF("fr", p.region); setF("fc", p.city);
-    setF("fi2", p.interest); setF("fco", p.contact);
-    setF("fs", p.site); setF("fcat", p.category); setF("fch", p.channel);
+    // Об'єднуємо interest + contact в одне поле «Цікавить / Коментар»
+    var interestParts = [];
+    if (p.interest && String(p.interest).trim()) interestParts.push(String(p.interest).trim());
+    if (p.contact  && String(p.contact).trim())  interestParts.push(String(p.contact).trim());
+    if (interestParts.length) setF("fi2", interestParts.join(" | "));
+    // Соціальні посилання: перевіряємо site + tg + додаткові поля
+    var socialParts = [];
+    if (p.site && String(p.site).trim()) socialParts.push(String(p.site).trim());
+    if (p.tg   && String(p.tg).trim())   socialParts.push(String(p.tg).trim());
+    // Витягуємо соцмережні URL з тексту заявки якщо не знайдено в полях
+    var rawText = document.getElementById("txt").value;
+    var socialRe = /https?:\/\/(www\.)?(t\.me|telegram\.me|instagram\.com|tiktok\.com|fb\.com|facebook\.com|youtube\.com|viber\.com)[^\s"')>]*/gi;
+    var found; while ((found = socialRe.exec(rawText)) !== null) {
+      var url = found[0].replace(/[.,;!?]+$/, "");
+      if (socialParts.indexOf(url) === -1) socialParts.push(url);
+    }
+    if (socialParts.length) setF("fs", socialParts.join(" | "));
+    setF("fcat", p.category); setF("fch", p.channel);
     if (p.date) document.getElementById("fd").value = p.date;
     var n = [p.name, p.phone, p.region, p.city].filter(Boolean).length;
     setSt("Готово — " + n + " полів заповнено", "ok");
@@ -522,7 +536,7 @@ async function doParse() {
 
 // ── Формування шаблону ────────────────────────────────────
 function doGen() {
-  var ids = ["fn","fp","fr","fc","fcat","fch","fi2","fco","fs","fd","fm"];
+  var ids = ["fn","fp","fr","fc","fcat","fch","fi2","fs","fd","fm"];
   var name  = document.getElementById("fn").value.trim();
   var phone = document.getElementById("fp").value.trim();
   var mgr   = document.getElementById("fm").value.trim();
@@ -591,17 +605,19 @@ function showToast(msg, color) {
 }
 
 // ── Viber ─────────────────────────────────────────────────
+var _viberPending = false;
+
 function shareViber() {
   var t = document.getElementById("out").textContent;
   if (!t || document.getElementById("out").classList.contains("empty")) return;
 
   var deepLink = "viber://pa?chatURI=" + VIBER_BOT_URI + "&text=" + encodeURIComponent(t);
 
+  _viberPending = true;
+
   if (deepLink.length <= 2000) {
-    // Відкриваємо Viber з текстом — один тап Надіслати (телефон і ПК)
     window.location.href = deepLink;
   } else {
-    // Текст задовгий — копіюємо і відкриваємо чат
     copyToClipboard(t, function() {
       showToast("Скопійовано! Вставте боту у Viber (довге натискання → Вставити)", "#5b21b6");
       setTimeout(function() {
@@ -611,6 +627,20 @@ function shareViber() {
   }
 }
 
+// Очищення форми коли користувач повертається з Viber
+document.addEventListener("visibilitychange", function() {
+  if (!document.hidden && _viberPending) {
+    _viberPending = false;
+    setTimeout(function() { doClear(); }, 400);
+  }
+});
+window.addEventListener("pageshow", function() {
+  if (_viberPending) {
+    _viberPending = false;
+    setTimeout(function() { doClear(); }, 400);
+  }
+});
+
 // ── Очистити ──────────────────────────────────────────────
 function doClear() {
   document.getElementById("txt").value = "";
@@ -619,7 +649,7 @@ function doClear() {
   p.style.display = "none"; p.src = "";
   document.getElementById("fi").value = "";
   document.getElementById("dz").style.display = "";
-  ["fn","fp","fr","fc","fi2","fco","fs"].forEach(function(id) {
+  ["fn","fp","fr","fc","fi2","fs"].forEach(function(id) {
     document.getElementById(id).value = "";
   });
   ["fcat","fch","fm"].forEach(function(id) {
