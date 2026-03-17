@@ -529,13 +529,21 @@ async function doParse() {
 
     if (inSrc(p.name))       setF("fn", p.name);
     if (phoneInSrc(p.phone)) setF("fp", p.phone);
-    if (inSrc(p.region))     setF("fr", p.region);
-    if (inSrc(p.city))       setF("fc", p.city);
+    function geoInSrc(val) {
+  if (!val || String(val).trim() === "") return false;
+  if (!hasText) return true;
+  var v = String(val).trim().toLowerCase();
+  // шукаємо як окреме слово (оточене пробілами, початком/кінцем рядка або розділовими знаками)
+  var re = new RegExp("(^|[\\s,.:;!?«»\"'()])"+v.replace(/[-\/]/g,"[-\\/]")+"($|[\\s,.:;!?«»\"'()])", "i");
+  return re.test(rawText);
+}
+    if (geoInSrc(p.region)) setF("fr", p.region);
+    if (geoInSrc(p.city))   setF("fc", p.city);
 
     // Об'єднуємо interest + contact в одне поле «Цікавить / Коментар»
     var interestParts = [];
-    if (p.interest && inSrc(p.interest)) interestParts.push(String(p.interest).trim());
-    if (p.contact  && inSrc(p.contact))  interestParts.push(String(p.contact).trim());
+    if (p.interest && String(p.interest).trim()) interestParts.push(String(p.interest).trim());
+    if (p.contact  && String(p.contact).trim())  interestParts.push(String(p.contact).trim());
     if (interestParts.length) setF("fi2", interestParts.join(" | "));
 
     // Соціальні посилання: перевіряємо site + tg + додаткові поля
@@ -552,8 +560,24 @@ async function doParse() {
 
     // Канал — класифікація, AI може висновувати з контексту
     // Категорія — тільки якщо є у вихідному тексті
-    if (inSrc(p.category)) setF("fcat", p.category);
-    setF("fch", p.channel);
+    function categoryInSrc(cat) {
+  if (!cat) return false;
+  if (!hasText) return true;
+  var keywords = {
+    "Інтернет":           ["інтернет","онлайн","сайт","маркет","інтернет-магазин"],
+    "Магазин":            ["магазин","крамниц","shop","торгова точка"],
+    "Хоче почати":        ["хоче почати","починаю","відкрива","відкрити бізнес","старт бізнес"],
+    "TikTok/Ефір":        ["tiktok","тікток","ефір","live","стрім"],
+    "Ринок стаціонарний": ["ринок","базар","лоток","намет","прилавок"],
+    "Для себе":           ["для себе","особист","власн","собі"],
+    "Виїздна торгівля":   ["виїзд","виїздн","ярмарок","вулиц","фестивал"]
+  };
+  var kws = keywords[cat];
+  if (!kws) return inSrc(cat);
+  return kws.some(function(k){ return srcLow.indexOf(k) !== -1; });
+}
+    if (categoryInSrc(p.category)) setF("fcat", p.category);
+   if (inSrc(p.channel)) setF("fch", p.channel);
     if (p.date) document.getElementById("fd").value = p.date;
     var n = [p.name, p.phone, p.region, p.city].filter(Boolean).length;
     setSt("Готово — " + n + " полів заповнено", "ok");
