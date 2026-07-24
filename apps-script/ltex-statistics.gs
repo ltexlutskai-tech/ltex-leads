@@ -60,7 +60,7 @@ var CFG = {
   // «Дата звернення», «Ім'я клієнта», «Телефон 1», «Канал пошуку» тощо
   PREFIXES: {
     name:     ['імя', 'имя', 'піб', 'фіо', 'фио', 'клієнт', 'клиент'],
-    phone:    ['телефон'],
+    phone:    ['телефон', 'номертел', 'номер'],
     region:   ['область'],
     city:     ['місто', 'город'],
     date:     ['дата'],
@@ -195,9 +195,10 @@ function collectData(ss) {
   var rows = [];
   getDataSheets(ss).forEach(function (sheet) {
     var name = sheet.getName();
-    // якщо назва аркуша — рік (2025, 2026…), використовуємо його як
-    // запасний рік для рядків без дати
-    var sheetYear = /^\d{4}$/.test(name) ? +name : null;
+    // якщо в назві аркуша є рік («2026», «🔒 2026»…) — використовуємо його
+    // як запасний рік для рядків без дати
+    var ym = name.match(/(19|20)\d{2}/);
+    var sheetYear = ym ? +ym[0] : null;
 
     var header = findHeader(sheet);
     if (!header) return; // не аркуш із клієнтами (наприклад, стара «Статистика»)
@@ -270,18 +271,40 @@ function collectData(ss) {
   };
 }
 
-/** Аркуші-джерела: явний список із CFG.DATA_SHEETS або всі, крім звітних */
+function reportNameSet() {
+  var names = {};
+  [CFG.REGISTRY, CFG.MATRIX, CFG.MATRIX_MGR, CFG.TREE, CFG.DASH, CFG.PIVOT]
+    .forEach(function (n) { names[n] = true; });
+  return names;
+}
+
+/**
+ * Аркуші-джерела: явний список із CFG.DATA_SHEETS або всі, крім звітних.
+ * Назва з DATA_SHEETS шукається спершу точно, а потім як ЧАСТИНА назви
+ * аркуша — тому запис '2026' знаходить і аркуш «🔒 2026».
+ */
 function getDataSheets(ss) {
   if (CFG.DATA_SHEETS && CFG.DATA_SHEETS.length) {
-    return CFG.DATA_SHEETS
-      .map(function (n) { return ss.getSheetByName(String(n)); })
-      .filter(Boolean);
+    var reportNames = reportNameSet();
+    var result = [], seen = {};
+    CFG.DATA_SHEETS.forEach(function (n) {
+      var key = String(n);
+      var sh = ss.getSheetByName(key);
+      if (!sh) {
+        sh = ss.getSheets().filter(function (s) {
+          return !reportNames[s.getName()] && s.getName().indexOf(key) !== -1;
+        })[0] || null;
+      }
+      if (sh && !seen[sh.getSheetId()]) {
+        seen[sh.getSheetId()] = true;
+        result.push(sh);
+      }
+    });
+    return result;
   }
-  var reportNames = {};
-  [CFG.REGISTRY, CFG.MATRIX, CFG.MATRIX_MGR, CFG.TREE, CFG.DASH, CFG.PIVOT]
-    .forEach(function (n) { reportNames[n] = true; });
+  var reportNames2 = reportNameSet();
   return ss.getSheets().filter(function (sh) {
-    return !reportNames[sh.getName()];
+    return !reportNames2[sh.getName()];
   });
 }
 
@@ -930,11 +953,9 @@ function showDiagnostics() {
 
   if (CFG.DATA_SHEETS && CFG.DATA_SHEETS.length) {
     lines.push('Джерела даних (CFG.DATA_SHEETS): ' + CFG.DATA_SHEETS.join(', '));
-    CFG.DATA_SHEETS.forEach(function (n) {
-      if (!ss.getSheetByName(String(n))) {
-        lines.push('⚠️ Аркуш «' + n + '» не знайдено в таблиці!');
-      }
-    });
+    var resolvedNames = getDataSheets(ss).map(function (s) { return '«' + s.getName() + '»'; });
+    lines.push('Знайдені аркуші: ' +
+      (resolvedNames.length ? resolvedNames.join(', ') : '⚠️ ЖОДНОГО — перевірте назви!'));
   } else {
     lines.push('Джерела даних: усі аркуші (автовизначення)');
   }
