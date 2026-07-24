@@ -6,8 +6,10 @@
  *  вставте цей файл повністю, збережіть, перезавантажте таблицю.
  *  З'явиться меню «📊 L-TEX Звіти».
  *
+ *  Джерело даних: аркуші, перелічені в CFG.DATA_SHEETS (зараз — «2026»).
+ *
  *  Що створює скрипт:
- *   📋 Реєстр            — плоский список УСІХ клієнтів з усіх аркушів
+ *   📋 Реєстр            — плоский список УСІХ клієнтів з аркушів-джерел
  *                          (основа для всіх звітів і зведених таблиць)
  *   📍 Області × Місяці  — матриця: області в рядках, місяці в колонках,
  *                          фільтри «Рік», «Статус», «Менеджер», рахується
@@ -31,6 +33,11 @@ var CFG = {
   DASH:       '📊 Дашборд',
   PIVOT:      '🔀 Зведена',
 
+  // Аркуші-джерела даних. Якщо список НЕ порожній — беремо клієнтів ТІЛЬКИ
+  // з цих аркушів. Якщо порожній ([]) — скануємо всі аркуші автоматично.
+  // Щоб додати архів 2025 — допишіть: ['2026', '2025']
+  DATA_SHEETS: ['2026'],
+
   // скільки перших рядків аркуша сканувати в пошуках рядка заголовків
   HEADER_SCAN_ROWS: 6,
 
@@ -38,15 +45,29 @@ var CFG = {
   // у нижньому регістрі): так скрипт сам знаходить потрібні колонки
   // на кожному аркуші, навіть якщо порядок колонок різний
   ALIASES: {
-    name:     ['імя', 'піб', 'клієнт', 'імяклієнта', 'name', 'фіо'],
-    phone:    ['телефон', 'тел', 'phone', 'номер', 'номертелефону'],
-    region:   ['область', 'обл', 'регіон', 'region'],
-    city:     ['місто', 'city', 'населенийпункт'],
-    date:     ['дата', 'date', 'датазвернення', 'датареєстрації'],
-    status:   ['статус', 'status'],
-    channel:  ['канал', 'каналпошуку', 'джерело', 'source'],
-    category: ['категорія', 'категоріятт', 'category'],
-    manager:  ['менеджер', 'manager', 'відповідальний']
+    name:     ['імя', 'піб', 'клієнт', 'name', 'фіо', 'имя', 'фио', 'клиент'],
+    phone:    ['тел', 'phone', 'номер', 'моб', 'мобільний'],
+    region:   ['обл', 'регіон', 'регион', 'region'],
+    city:     ['city', 'населенийпункт'],
+    date:     ['date'],
+    status:   ['status'],
+    channel:  ['джерело', 'источник', 'source'],
+    category: ['category'],
+    manager:  ['manager', 'відповідальний', 'ответственный']
+  },
+
+  // збіг також зараховується, якщо заголовок ПОЧИНАЄТЬСЯ з цих слів:
+  // «Дата звернення», «Ім'я клієнта», «Телефон 1», «Канал пошуку» тощо
+  PREFIXES: {
+    name:     ['імя', 'имя', 'піб', 'фіо', 'фио', 'клієнт', 'клиент'],
+    phone:    ['телефон'],
+    region:   ['область'],
+    city:     ['місто', 'город'],
+    date:     ['дата'],
+    status:   ['статус'],
+    channel:  ['канал', 'джерело', 'источник'],
+    category: ['категорі', 'категория'],
+    manager:  ['менеджер']
   },
 
   OBLASTS: [
@@ -87,6 +108,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('📊 L-TEX Звіти')
     .addItem('🔄 Оновити всі звіти', 'rebuildAll')
+    .addItem('🔍 Діагностика даних', 'showDiagnostics')
     .addSeparator()
     .addItem('♻️ Скинути зведену таблицю', 'resetPivot')
     .addSeparator()
@@ -127,8 +149,20 @@ function rebuildAll() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return; // вже виконується — виходимо
   try {
-    ss.toast('Збираю дані з усіх аркушів…', 'L-TEX Звіти', 60);
+    ss.toast('Збираю дані…', 'L-TEX Звіти', 60);
     var model = collectData(ss);
+
+    if (!model.rows.length) {
+      SpreadsheetApp.getUi().alert(
+        'L-TEX Звіти',
+        'Не знайдено жодного клієнта в аркушах-джерелах (' +
+        (CFG.DATA_SHEETS.join(', ') || 'усі аркуші') + ').\n\n' +
+        'Відкрийте меню «📊 L-TEX Звіти → 🔍 Діагностика даних», щоб побачити, ' +
+        'які колонки розпізнано на кожному аркуші.',
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
 
     ss.toast('Будую 📋 Реєстр (' + model.rows.length + ' клієнтів)…', 'L-TEX Звіти', 60);
     buildRegistry(ss, model);
@@ -158,14 +192,12 @@ function rebuildAll() {
 // ═══════════════════════════════════════════════════════════════════
 
 function collectData(ss) {
-  var reportNames = {};
-  [CFG.REGISTRY, CFG.MATRIX, CFG.MATRIX_MGR, CFG.TREE, CFG.DASH, CFG.PIVOT]
-    .forEach(function (n) { reportNames[n] = true; });
-
   var rows = [];
-  ss.getSheets().forEach(function (sheet) {
+  getDataSheets(ss).forEach(function (sheet) {
     var name = sheet.getName();
-    if (reportNames[name]) return;
+    // якщо назва аркуша — рік (2025, 2026…), використовуємо його як
+    // запасний рік для рядків без дати
+    var sheetYear = /^\d{4}$/.test(name) ? +name : null;
 
     var header = findHeader(sheet);
     if (!header) return; // не аркуш із клієнтами (наприклад, стара «Статистика»)
@@ -190,7 +222,7 @@ function collectData(ss) {
 
       rows.push({
         date: d,
-        year: d ? d.getFullYear() : '',
+        year: d ? d.getFullYear() : (sheetYear || ''),
         monthN: d ? d.getMonth() + 1 : '',
         month: d ? monthKey(d) : 'Без дати',
         region: normRegion(get('region')),
@@ -238,7 +270,25 @@ function collectData(ss) {
   };
 }
 
-/** Пошук рядка заголовків: потрібні щонайменше колонки Ім'я + Телефон + Дата */
+/** Аркуші-джерела: явний список із CFG.DATA_SHEETS або всі, крім звітних */
+function getDataSheets(ss) {
+  if (CFG.DATA_SHEETS && CFG.DATA_SHEETS.length) {
+    return CFG.DATA_SHEETS
+      .map(function (n) { return ss.getSheetByName(String(n)); })
+      .filter(Boolean);
+  }
+  var reportNames = {};
+  [CFG.REGISTRY, CFG.MATRIX, CFG.MATRIX_MGR, CFG.TREE, CFG.DASH, CFG.PIVOT]
+    .forEach(function (n) { reportNames[n] = true; });
+  return ss.getSheets().filter(function (sh) {
+    return !reportNames[sh.getName()];
+  });
+}
+
+/**
+ * Пошук рядка заголовків: потрібна колонка Телефон + хоча б одна з
+ * колонок Ім'я або Дата (в одному рядку, серед перших рядків аркуша).
+ */
 function findHeader(sheet) {
   var lastCol = sheet.getLastColumn();
   var lastRow = sheet.getLastRow();
@@ -252,14 +302,26 @@ function findHeader(sheet) {
     for (var c = 0; c < lastCol; c++) {
       var norm = normHeaderCell(values[r][c]);
       if (!norm) continue;
-      for (var field in CFG.ALIASES) {
-        if (cols[field] === undefined && CFG.ALIASES[field].indexOf(norm) !== -1) {
-          cols[field] = c;
-        }
-      }
+      var field = matchHeaderField(norm);
+      if (field && cols[field] === undefined) cols[field] = c;
     }
-    if (cols.name !== undefined && cols.phone !== undefined && cols.date !== undefined) {
+    if (cols.phone !== undefined &&
+        (cols.name !== undefined || cols.date !== undefined)) {
       return { row: r + 1, cols: cols };
+    }
+  }
+  return null;
+}
+
+/** До якого поля належить нормалізований заголовок (точний збіг або префікс) */
+function matchHeaderField(norm) {
+  for (var field in CFG.ALIASES) {
+    if (CFG.ALIASES[field].indexOf(norm) !== -1) return field;
+  }
+  for (var f2 in CFG.PREFIXES) {
+    var prefixes = CFG.PREFIXES[f2];
+    for (var i = 0; i < prefixes.length; i++) {
+      if (norm.indexOf(prefixes[i]) === 0) return f2;
     }
   }
   return null;
@@ -640,11 +702,14 @@ function buildTree(ss, model) {
   sh.getRange(1, 4, values.length, 1).setNumberFormat('@');
 
   // групи рядків: кнопка «+/–» біля рядка з назвою області
+  var created = 0;
   sh.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE);
   groupRanges.forEach(function (g) {
-    if (g[1] > 0) sh.getRange(g[0], 1, g[1], 1).shiftRowGroupDepth(1);
+    if (g[1] > 0) { sh.getRange(g[0], 1, g[1], 1).shiftRowGroupDepth(1); created++; }
   });
-  sh.collapseAllRowGroups();
+  if (created) {
+    try { sh.collapseAllRowGroups(); } catch (err) { /* груп нема — ок */ }
+  }
 }
 
 function monthLabel(mk) {
@@ -850,6 +915,72 @@ function resetPivot() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// 🔍 ДІАГНОСТИКА — що скрипт бачить на кожному аркуші
+// ═══════════════════════════════════════════════════════════════════
+
+var FIELD_LABELS = {
+  name: "Ім'я", phone: 'Телефон', region: 'Область', city: 'Місто',
+  date: 'Дата', status: 'Статус', channel: 'Канал', category: 'Категорія',
+  manager: 'Менеджер'
+};
+
+function showDiagnostics() {
+  var ss = SpreadsheetApp.getActive();
+  var lines = [];
+
+  if (CFG.DATA_SHEETS && CFG.DATA_SHEETS.length) {
+    lines.push('Джерела даних (CFG.DATA_SHEETS): ' + CFG.DATA_SHEETS.join(', '));
+    CFG.DATA_SHEETS.forEach(function (n) {
+      if (!ss.getSheetByName(String(n))) {
+        lines.push('⚠️ Аркуш «' + n + '» не знайдено в таблиці!');
+      }
+    });
+  } else {
+    lines.push('Джерела даних: усі аркуші (автовизначення)');
+  }
+  lines.push('');
+
+  getDataSheets(ss).forEach(function (sheet) {
+    var name = sheet.getName();
+    var h = findHeader(sheet);
+    if (!h) {
+      lines.push('✖ «' + name + '» — колонки НЕ розпізнано.');
+      lines.push('   Потрібен рядок заголовків із колонкою «Телефон» та хоча б');
+      lines.push('   однією з колонок «Ім\'я» або «Дата» (серед перших ' +
+                 CFG.HEADER_SCAN_ROWS + ' рядків).');
+      var lastCol = Math.min(sheet.getLastColumn(), 15);
+      for (var r = 1; r <= Math.min(2, sheet.getLastRow()); r++) {
+        if (lastCol > 0) {
+          var vals = sheet.getRange(r, 1, 1, lastCol).getDisplayValues()[0];
+          lines.push('   Рядок ' + r + ': [' + vals.join(' | ') + ']');
+        }
+      }
+    } else {
+      var mapped = [];
+      for (var field in h.cols) {
+        mapped.push(FIELD_LABELS[field] + ' → колонка ' + columnLetter(h.cols[field] + 1));
+      }
+      var dataRows = Math.max(0, sheet.getLastRow() - h.row);
+      lines.push('✓ «' + name + '» — заголовки в рядку ' + h.row +
+                 ', рядків даних: ' + dataRows);
+      lines.push('   ' + mapped.join(', '));
+      var missing = [];
+      for (var f in FIELD_LABELS) {
+        if (h.cols[f] === undefined) missing.push(FIELD_LABELS[f]);
+      }
+      if (missing.length) lines.push('   Не знайдено (необов\'язково): ' + missing.join(', '));
+    }
+    lines.push('');
+  });
+
+  var esc = lines.join('\n').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  var html = HtmlService.createHtmlOutput(
+    '<pre style="font:12px/1.5 monospace;white-space:pre-wrap">' + esc + '</pre>'
+  ).setWidth(650).setHeight(450);
+  SpreadsheetApp.getUi().showModalDialog(html, '🔍 Діагностика даних L-TEX');
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // АВТООНОВЛЕННЯ
 // ═══════════════════════════════════════════════════════════════════
 
@@ -898,6 +1029,7 @@ function quickRebuild() {
   if (!lock.tryLock(5000)) return;
   try {
     var model = collectData(ss);
+    if (!model.rows.length) return; // джерело порожнє/недоступне — не стираємо звіти
     buildRegistry(ss, model);
     buildTree(ss, model);
     ensurePivot(ss);
