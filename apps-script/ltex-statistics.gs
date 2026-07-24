@@ -51,6 +51,7 @@ var CFG = {
     city:     ['city', 'населенийпункт'],
     date:     ['date'],
     status:   ['status'],
+    activity: ['activity'],
     channel:  ['джерело', 'источник', 'source'],
     category: ['category'],
     manager:  ['manager', 'відповідальний', 'ответственный']
@@ -65,6 +66,7 @@ var CFG = {
     city:     ['місто', 'город'],
     date:     ['дата'],
     status:   ['статус'],
+    activity: ['активн'],
     channel:  ['канал', 'джерело', 'источник'],
     category: ['категорі', 'категория'],
     manager:  ['менеджер']
@@ -93,12 +95,12 @@ var CFG = {
 
 // колонки Реєстру (1-based)
 var RC = { DATE: 1, YEAR: 2, MONTH_N: 3, MONTH: 4, REGION: 5, CITY: 6,
-           NAME: 7, PHONE: 8, STATUS: 9, CHANNEL: 10, CATEGORY: 11,
-           MANAGER: 12, SHEET: 13, ROW: 14 };
-var RC_TOTAL = 14;
+           NAME: 7, PHONE: 8, STATUS: 9, ACTIVITY: 10, CHANNEL: 11,
+           CATEGORY: 12, MANAGER: 13, SHEET: 14, ROW: 15 };
+var RC_TOTAL = 15;
 var REGISTRY_HEADER = ['Дата', 'Рік', '№ міс.', 'Місяць', 'Область', 'Місто',
-                       "Ім'я", 'Телефон', 'Статус', 'Канал', 'Категорія',
-                       'Менеджер', 'Аркуш', 'Рядок'];
+                       "Ім'я", 'Телефон', 'Статус', 'Активність', 'Канал',
+                       'Категорія', 'Менеджер', 'Аркуш', 'Рядок'];
 
 // ═══════════════════════════════════════════════════════════════════
 // МЕНЮ
@@ -124,10 +126,10 @@ function showHelp() {
     'L-TEX Звіти — довідка',
     '📋 Реєстр — усі клієнти з усіх аркушів одним списком. Має фільтр:\n' +
     'можна сортувати і відбирати клієнтів прямо тут.\n\n' +
-    '📍 Області × Місяці — фільтри Рік / Статус / Менеджер у верхньому\n' +
-    'рядку, цифри перерахуються миттєво (формули).\n\n' +
+    '📍 Області × Місяці — фільтри Рік / Статус / Активність / Менеджер\n' +
+    'у верхньому рядку, цифри перерахуються миттєво (формули).\n\n' +
     '👥 Менеджери × Місяці — те саме в розрізі менеджерів,\n' +
-    'з фільтром по області.\n\n' +
+    'з фільтрами Активність та Область.\n\n' +
     '🌳 Ієрархія — натискайте «+» ліворуч, щоб розгорнути область\n' +
     'і побачити клієнтів по місяцях з датами.\n\n' +
     '🔀 Зведена — звичайна зведена таблиця: натисніть «Змінити» і\n' +
@@ -232,6 +234,7 @@ function collectData(ss) {
         phone: rawPhone,
         phoneKey: normPhone(rawPhone),
         status: normStatus(get('status')),
+        activity: normLabel(get('activity'), 'Без активності'),
         channel: get('channel'),
         category: get('category'),
         manager: manager,
@@ -263,6 +266,7 @@ function collectData(ss) {
     dupRows: dupRows,
     years: uniqSorted(rows.map(function (r) { return r.year; })).reverse(),
     statuses: tallyKeysDesc(rows, function (r) { return r.status; }),
+    activities: tallyKeysDesc(rows, function (r) { return r.activity; }),
     channels: tallyKeysDesc(rows, function (r) { return r.channel; }),
     managers: tallyKeysDesc(rows, function (r) { return r.manager; }),
     regions: tallyKeysDesc(rows, function (r) { return r.region; }),
@@ -374,8 +378,12 @@ function normRegion(raw) {
 }
 
 function normStatus(raw) {
+  return normLabel(raw, 'Без статусу');
+}
+
+function normLabel(raw, fallback) {
   var s = String(raw || '').trim();
-  if (!s) return 'Без статусу';
+  if (!s) return fallback;
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
@@ -468,7 +476,8 @@ function buildRegistry(ss, model) {
 
   var out = model.rows.map(function (r) {
     return [r.date || '', r.year, r.monthN, r.month, r.region, r.city, r.name,
-            r.phone, r.status, r.channel, r.category, r.manager, r.sheet, r.srcRow];
+            r.phone, r.status, r.activity, r.channel, r.category, r.manager,
+            r.sheet, r.srcRow];
   });
 
   sh.getRange(1, 1, 1, RC_TOTAL).setValues([REGISTRY_HEADER])
@@ -508,9 +517,10 @@ function buildMatrix(ss, model) {
     rowValues: regions,
     rowRegCol: RC.REGION,
     filters: [
-      { label: 'Рік:',      list: model.years.map(String), regCol: RC.YEAR },
-      { label: 'Статус:',   list: model.statuses,          regCol: RC.STATUS },
-      { label: 'Менеджер:', list: model.managers,          regCol: RC.MANAGER }
+      { label: 'Рік:',        list: model.years.map(String), regCol: RC.YEAR },
+      { label: 'Статус:',     list: model.statuses,          regCol: RC.STATUS },
+      { label: 'Активність:', list: model.activities,        regCol: RC.ACTIVITY },
+      { label: 'Менеджер:',   list: model.managers,          regCol: RC.MANAGER }
     ]
   });
 }
@@ -523,9 +533,10 @@ function buildMatrixManagers(ss, model) {
     rowValues: model.managers,
     rowRegCol: RC.MANAGER,
     filters: [
-      { label: 'Рік:',     list: model.years.map(String), regCol: RC.YEAR },
-      { label: 'Статус:',  list: model.statuses,          regCol: RC.STATUS },
-      { label: 'Область:', list: model.regions,           regCol: RC.REGION }
+      { label: 'Рік:',        list: model.years.map(String), regCol: RC.YEAR },
+      { label: 'Статус:',     list: model.statuses,          regCol: RC.STATUS },
+      { label: 'Активність:', list: model.activities,        regCol: RC.ACTIVITY },
+      { label: 'Область:',    list: model.regions,           regCol: RC.REGION }
     ]
   });
 }
@@ -547,11 +558,11 @@ function buildMatrixSheet(ss, opts) {
   var totalRow = lastDataRow + 1;
   ensureGrid(sh, totalRow + 2, 15);
 
-  // ── рядок 1: фільтри (значення — об'єднані клітинки B:C, E:F, H:J) ──
-  var filterCells = ['$B$1', '$E$1', '$H$1'];
-  var filterDefs = opts.filters.slice(0, 3);
-  var labelCols = [1, 4, 7];
-  var mergeSpec = [[2, 2], [5, 2], [8, 3]]; // [колонка, ширина об'єднання]
+  // ── рядок 1: до чотирьох фільтрів (значення — об'єднані клітинки) ──
+  var filterCells = ['$B$1', '$E$1', '$H$1', '$K$1'];
+  var filterDefs = opts.filters.slice(0, 4);
+  var labelCols = [1, 4, 7, 10];
+  var mergeSpec = [[2, 2], [5, 2], [8, 2], [11, 2]]; // [колонка, ширина об'єднання]
 
   var filterTerms = '';
   filterDefs.forEach(function (fd, i) {
@@ -566,7 +577,7 @@ function buildMatrixSheet(ss, opts) {
     filterTerms += '*((' + filterCells[i] + '="Всі")+((' + regRef(fd.regCol) +
                    '&"")=(' + filterCells[i] + '&"")))';
   });
-  sh.getRange('K1').setValue('← фільтри: цифри перерахуються миттєво')
+  sh.getRange(1, 13).setValue('← фільтри: цифри перерахуються миттєво')
     .setFontColor(CFG.C_GRAY).setFontStyle('italic');
 
   // ── рядок 2: службові номери місяців (прихований) ──
@@ -649,9 +660,9 @@ function buildTree(ss, model) {
   if (old) ss.deleteSheet(old);
   var sh = ss.insertSheet(CFG.TREE, index);
 
-  var NCOL = 8;
+  var NCOL = 9;
   var HEADERS = ['Область / Місяць', 'Дата', "Ім'я", 'Телефон', 'Місто',
-                 'Статус', 'Канал', 'Менеджер'];
+                 'Статус', 'Активність', 'Канал', 'Менеджер'];
 
   // групуємо: область → місяць → клієнти
   var byRegion = {};
@@ -670,19 +681,17 @@ function buildTree(ss, model) {
   var rowOf = function (arr) { var a = []; for (var i = 0; i < NCOL; i++) a.push(arr[i] || ''); return a; };
   var fill = function (v) { var a = []; for (var i = 0; i < NCOL; i++) a.push(v); return a; };
 
-  push(rowOf(['🌳 Ієрархічний звіт: область → місяць → клієнти',
-              '', '', '', '', '', '', '']),
+  push(rowOf(['🌳 Ієрархічний звіт: область → місяць → клієнти']),
        fill(CFG.C_DARK), fill('bold'), fill('#ffffff'));
   push(rowOf(['Натискайте «+» ліворуч, щоб розгорнути область. Оновлено: ' +
-              Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd.MM.yyyy HH:mm'),
-              '', '', '', '', '', '', '']),
+              Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'dd.MM.yyyy HH:mm')]),
        fill('#ffffff'), fill('normal'), fill(CFG.C_GRAY));
   push(HEADERS, fill(CFG.C_MID), fill('bold'), fill('#ffffff'));
 
   regionOrder.forEach(function (region) {
     var list = byRegion[region];
     // область
-    push(rowOf([region + '  —  ' + list.length + ' кл.', '', '', '', '', '', '', '']),
+    push(rowOf([region + '  —  ' + list.length + ' кл.']),
          fill(CFG.C_LIGHT), fill('bold'), fill(CFG.C_DARK));
     var blockStart = values.length + 1; // перший рядок вмісту області (1-based)
 
@@ -699,11 +708,11 @@ function buildTree(ss, model) {
       clients.sort(function (a, b) {
         return (a.date ? a.date.getTime() : 0) - (b.date ? b.date.getTime() : 0);
       });
-      push(rowOf(['      ' + monthLabel(mk) + '  —  ' + clients.length, '', '', '', '', '', '', '']),
+      push(rowOf(['      ' + monthLabel(mk) + '  —  ' + clients.length]),
            fill(CFG.C_LIGHT2), fill('bold'), fill(CFG.C_MID));
       clients.forEach(function (r) {
         push(['', r.date ? Utilities.formatDate(r.date, ss.getSpreadsheetTimeZone(), 'dd.MM.yyyy') : '—',
-              r.name, r.phone, r.city, r.status, r.channel, r.manager],
+              r.name, r.phone, r.city, r.status, r.activity, r.channel, r.manager],
              fill('#ffffff'), fill('normal'), fill('#000000'));
       });
     });
@@ -721,7 +730,7 @@ function buildTree(ss, model) {
   sh.setColumnWidth(3, 180);
   sh.setColumnWidth(4, 110);
   sh.setColumnWidth(5, 130);
-  sh.setColumnWidths(6, 3, 110);
+  sh.setColumnWidths(6, 4, 110);
   sh.getRange(1, 4, values.length, 1).setNumberFormat('@');
 
   // групи рядків: кнопка «+/–» біля рядка з назвою області
@@ -860,6 +869,27 @@ function buildDashboard(ss, model) {
   }
   r2 += 2;
 
+  // активність
+  blockHeader(r2, 6, 4, 'АКТИВНІСТЬ'); r2++;
+  var actHead = [''].concat(years.map(String)).concat(['Разом']);
+  sh.getRange(r2, 6, 1, actHead.length).setValues([actHead])
+    .setFontWeight('bold').setBackground(CFG.C_LIGHT).setHorizontalAlignment('center');
+  r2++;
+  model.activities.forEach(function (act) {
+    var esc = act.replace(/"/g, '""');
+    sh.getRange(r2, 6).setValue(act);
+    var f = [];
+    years.forEach(function (y) {
+      f.push('=COUNTIFS(' + regRef(RC.ACTIVITY) + ',"' + esc + '",' +
+             regRef(RC.YEAR) + ',' + y + ')');
+    });
+    f.push('=COUNTIF(' + regRef(RC.ACTIVITY) + ',"' + esc + '")');
+    sh.getRange(r2, 7, 1, f.length).setFormulas([f]).setHorizontalAlignment('center');
+    sh.getRange(r2, 6 + f.length).setFontWeight('bold');
+    r2++;
+  });
+  r2 += 2;
+
   // канали
   blockHeader(r2, 6, 4, 'КАНАЛИ'); r2++;
   var chHead = [''].concat(years.map(String)).concat(['Разом']);
@@ -906,7 +936,8 @@ function ensurePivot(ss) {
       try {
         var src = pts[0].getSourceDataRange();
         ok = src.getSheet().getName() === CFG.REGISTRY &&
-             src.getLastRow() >= reg.getLastRow();
+             src.getLastRow() >= reg.getLastRow() &&
+             src.getLastColumn() >= RC_TOTAL;
       } catch (err) { ok = false; }
       if (ok) return;
     }
@@ -943,8 +974,8 @@ function resetPivot() {
 
 var FIELD_LABELS = {
   name: "Ім'я", phone: 'Телефон', region: 'Область', city: 'Місто',
-  date: 'Дата', status: 'Статус', channel: 'Канал', category: 'Категорія',
-  manager: 'Менеджер'
+  date: 'Дата', status: 'Статус', activity: 'Активність', channel: 'Канал',
+  category: 'Категорія', manager: 'Менеджер'
 };
 
 function showDiagnostics() {
