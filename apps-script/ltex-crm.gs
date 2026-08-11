@@ -45,7 +45,7 @@ const MGR_COL_NEW_STATUS    = 17;  // Q у файлі менеджера
 const MGR_COL_NEW_COMMENT   = 18;  // R у файлі менеджера
 const HDR_NEW_STATUS        = "Оновлений статус";
 const HDR_NEW_COMMENT       = "Коментар (результат розмови), НПТ (не піднімає трубку)";
-const NEW_STATUS_LIST       = ["Карточка клієнта", "без змін", "вилучити"];
+const NEW_STATUS_LIST       = ["Карточка клієнта", "без змін", "НПТ", "вилучити"];
 
 // ── Розподіл менеджерів за областями ──────────────────────
 // Якщо область не знайдена — призначається ADMIN_MANAGER
@@ -1907,7 +1907,7 @@ function backfillStatusesFromManagers() {
 //
 // Що додається:
 //   «Оновлений статус» — випадаючий список:
-//        Карточка клієнта / без змін / вилучити
+//        Карточка клієнта / без змін / НПТ / вилучити
 //   «Коментар (результат розмови), НПТ (не піднімає трубку)» — вільний текст
 //
 // Розташування (колонки додаються в КІНЕЦЬ, наявні дані не зсуваються):
@@ -2036,19 +2036,32 @@ function newStatusRule_() {
     .build();
 }
 
-// Створює колонку F в аркуші «Довідники» і заповнює трьома значеннями
+// Створює колонку F в аркуші «Довідники» і доливає значення з NEW_STATUS_LIST.
+// Те, що вже є в колонці, не чіпаємо — додаються лише відсутні значення,
+// тому функцію можна запускати повторно після розширення списку статусів.
 function ensureNewStatusDictionary_() {
   var ss = SpreadsheetApp.openById(MAIN_FILE_ID);
   var ref = ss.getSheetByName("Довідники");
   if (!ref) { Logger.log("Аркуш «Довідники» не знайдено — пропускаю"); return; }
   if (ref.getMaxColumns() < 6) ref.insertColumnsAfter(ref.getMaxColumns(), 6 - ref.getMaxColumns());
-  if (ref.getMaxRows() < 2 + NEW_STATUS_LIST.length) {
-    ref.insertRowsAfter(ref.getMaxRows(), 2 + NEW_STATUS_LIST.length - ref.getMaxRows());
-  }
   if (!ref.getRange("F1").getValue()) ref.getRange("F1").setValue(HDR_NEW_STATUS).setFontWeight("bold");
-  var existing = ref.getRange(2, 6, ref.getMaxRows() - 1, 1).getValues().flat().filter(String);
-  if (!existing.length) {
-    ref.getRange(2, 6, NEW_STATUS_LIST.length, 1)
-       .setValues(NEW_STATUS_LIST.map(function(v){ return [v]; }));
+
+  var colVals = ref.getRange(2, 6, Math.max(ref.getMaxRows() - 1, 1), 1).getValues();
+  var lastUsed = 1;   // рядок 1 = заголовок
+  for (var i = 0; i < colVals.length; i++) {
+    if (colVals[i][0] !== "" && colVals[i][0] !== null) lastUsed = i + 2;
   }
+  var existingLow = colVals.flat().filter(String).map(function(v){ return v.toString().trim().toLowerCase(); });
+  var missing = NEW_STATUS_LIST.filter(function(v){
+    return existingLow.indexOf(v.toLowerCase()) === -1;
+  });
+  if (!missing.length) return;
+
+  var firstFree = lastUsed + 1;
+  if (ref.getMaxRows() < firstFree + missing.length - 1) {
+    ref.insertRowsAfter(ref.getMaxRows(), firstFree + missing.length - 1 - ref.getMaxRows());
+  }
+  ref.getRange(firstFree, 6, missing.length, 1)
+     .setValues(missing.map(function(v){ return [v]; }));
+  Logger.log("Довідники F: додано " + missing.join(", "));
 }
