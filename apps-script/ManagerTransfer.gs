@@ -108,7 +108,11 @@ function onMainEditTransfer(e) {
 // ── Ядро переносу ─────────────────────────────────────────
 // Приводить файли менеджерів у відповідність до колонки «Менеджер»
 // головної таблиці для одного рядка.
-function transferLeadRow_(sheet, row) {
+// opts.skipViberId — кому НЕ слати сповіщення (той, хто сам ініціював
+// перенос командою в боті: він і так отримає відповідь).
+// Повертає {moved: true/false, id, from: [...], to: "..."}.
+function transferLeadRow_(sheet, row, opts) {
+  opts = opts || {};
   var rowData = sheet.getRange(row, 1, 1, MAIN_LAST_COL).getValues()[0];
 
   var rowId = rowData[COL.ID-1] ? rowData[COL.ID-1].toString().trim() : "";
@@ -118,14 +122,17 @@ function transferLeadRow_(sheet, row) {
     rowData[COL.ID-1] = rowId;
   }
   var name = rowData[COL.NAME-1] ? rowData[COL.NAME-1].toString().trim() : "";
-  if (!name && !rowData[COL.PHONE-1]) return; // порожній рядок — нема що переносити
+  if (!name && !rowData[COL.PHONE-1]) return {moved:false, id:rowId, from:[], to:""}; // порожній рядок
 
   var toName   = rowData[COL.MANAGER-1] ? rowData[COL.MANAGER-1].toString().trim() : "";
   var allFiles = getAllManagerFiles_();   // включно з неактивними менеджерами
   var managers = getManagers();           // активні (для сповіщень і синхронізації)
 
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(20000)) { Logger.log("transferLeadRow_: система зайнята, " + rowId); return; }
+  if (!lock.tryLock(20000)) {
+    Logger.log("transferLeadRow_: система зайнята, " + rowId);
+    return {moved:false, id:rowId, from:[], to:toName, busy:true};
+  }
 
   var removedFrom = [];
   var carry = {};
@@ -171,13 +178,16 @@ function transferLeadRow_(sheet, row) {
 
   // Якщо нікого не «розкуркулили» — це перше призначення, а не перенос.
   // Сповіщення про нового клієнта вже шле onEdit у Code.gs.
-  if (!removedFrom.length) return;
+  // opts.forceNotify — для команди бота і ручних функцій: там onEdit не
+  // спрацьовує (зміни зі скрипта тригер не ловить), тож пишемо самі.
+  if (!removedFrom.length && !opts.forceNotify) return {moved:false, id:rowId, from:[], to:toName};
 
-  var fromLabel = removedFrom.join(", ");
+  var fromLabel = removedFrom.length ? removedFrom.join(", ") : "—";
   var card      = leadCard_(rowData);
 
   // 4) Новому менеджеру
-  if (toName && managers[toName] && managers[toName].viberId) {
+  if (toName && managers[toName] && managers[toName].viberId &&
+      managers[toName].viberId !== opts.skipViberId) {
     sendViber(managers[toName].viberId,
       "📥 Вам передано контрагента!\n\n" + card +
       "\nПопередній менеджер: " + fromLabel +
@@ -189,7 +199,7 @@ function transferLeadRow_(sheet, row) {
   for (var k = 0; k < removedFrom.length; k++) {
     var prev = removedFrom[k];
     var vid  = allFiles[prev] ? allFiles[prev].viberId : "";
-    if (!vid) continue;
+    if (!vid || vid === opts.skipViberId) continue;
     sendViber(vid,
       "📤 Контрагента передано іншому менеджеру\n\n" + card +
       "\nНовий менеджер: " + (toName || "—") +
@@ -209,6 +219,8 @@ function transferLeadRow_(sheet, row) {
     try { pushLeadToLtexCrm(rowData, rowId, "Перепризначення менеджера"); }
     catch (err) { Logger.log("transfer → LTEX CRM: " + err); }
   }
+
+  return {moved:removedFrom.length > 0, id:rowId, from:removedFrom, to:toName, name:name};
 }
 
 
@@ -389,7 +401,7 @@ function reassignLead(rowId, newManagerName) {
     var row = DATA_START + i;
     sheet.getRange(row, COL.MANAGER).setValue(newManagerName);
     SpreadsheetApp.flush();
-    transferLeadRow_(sheet, row);
+    transferLeadRow_(sheet, row, {forceNotify: true});
     Logger.log("✅ " + rowId + " → " + newManagerName);
     return;
   }
@@ -465,4 +477,171 @@ function cleanupManagerFilesFromMain(dryRun) {
   Logger.log(dryRun
     ? "=== Це була ПЕРЕВІРКА. Щоб видалити — cleanupManagerFilesFromMain(false) ==="
     : "=== Готово: файли менеджерів приведено у відповідність до головної ===");
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║   Команда бота: /передати — перенос прямо з Viber        ║
+// ╚══════════════════════════════════════════════════════════╝
+//
+// ▶ Щоб команда запрацювала, додай у doPost (файл Code.gs) один рядок —
+//   одразу після блоку команди «/1с»:
+//
+//     if (tl.startsWith("/передати")||tl.startsWith("/передать")||tl.startsWith("/transfer")) {
+//       handleTransferCommand(text, sender); return okResponse();
+//     }
+//
+// ▶ Формати:
+//     /передати 0671234567 Дунас Богдан
+//     /передати LTEX-20260101-1234 Дунас
+//     /передати
+//     Телефон: 0671234567
+//     Менеджер: Дунас Богдан
+//
+// ▶ Права:
+//     адміністратор і керівники (ADMIN_VIBER_ID, NOTIFY_IDS) — будь-якого клієнта;
+//     менеджер — тільки своїх клієнтів.
+
+function handleTransferCommand(text, sender) {
+  try {
+    var raw = text.replace(/^\/(передати|передать|transfer)\s*/i, "").trim();
+    var key = "", mgrInput = "";
+
+    if (/(телефон|тел|id|менеджер)\s*:/i.test(raw)) {
+      var lines = raw.split("\n").map(function(l){ return l.trim(); }).filter(String);
+      function field(keys) {
+        for (var i = 0; i < keys.length; i++) {
+          for (var j = 0; j < lines.length; j++) {
+            if (lines[j].toLowerCase().indexOf(keys[i] + ":") === 0) {
+              return lines[j].substring(lines[j].indexOf(":") + 1).trim();
+            }
+          }
+        }
+        return "";
+      }
+      key      = field(["телефон", "тел", "id", "ід"]);
+      mgrInput = field(["менеджер"]);
+    } else {
+      var parts = raw.split(/\s+/).filter(String);
+      if (parts.length >= 2) { key = parts.shift(); mgrInput = parts.join(" "); }
+    }
+
+    if (!key || !mgrInput) { sendViber(sender.id, transferHelpText_()); return; }
+
+    var managers = getManagers();
+
+    // ── Хто просить ──
+    var senderName = "";
+    for (var mn in managers) {
+      if (managers[mn].viberId && managers[mn].viberId === sender.id) { senderName = mn; break; }
+    }
+    var isAdmin = (sender.id === ADMIN_VIBER_ID) ||
+                  (typeof NOTIFY_IDS !== "undefined" && NOTIFY_IDS.indexOf(sender.id) !== -1);
+    if (!isAdmin && !senderName) {
+      sendViber(sender.id, "⛔ Команда доступна лише зареєстрованим менеджерам.\nНапишіть /старт для реєстрації.");
+      return;
+    }
+
+    // ── Кому передаємо ──
+    var resolved = resolveManagerName_(mgrInput, managers);
+    if (resolved.error) { sendViber(sender.id, resolved.error); return; }
+    var toName = resolved.name;
+
+    // ── Якого клієнта ──
+    var sheet = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+    if (!sheet) { sendViber(sender.id, "❌ Головну таблицю не знайдено."); return; }
+    var found = findMainRowByKey_(sheet, key);
+    if (!found) {
+      sendViber(sender.id, "❌ Контрагента «" + key + "» не знайдено в таблиці 2026.\n\n" +
+                           "Перевір номер або ID (його видно в картці клієнта).");
+      return;
+    }
+
+    var rowData = found.data;
+    var current = rowData[COL.MANAGER-1] ? rowData[COL.MANAGER-1].toString().trim() : "";
+
+    if (!isAdmin && current && current !== senderName) {
+      sendViber(sender.id, "⛔ Цей контрагент закріплений за менеджером «" + current + "».\n" +
+                           "Передати його може сам менеджер або адміністратор.");
+      return;
+    }
+    if (current === toName) {
+      sendViber(sender.id, "ℹ️ Контрагент уже закріплений за менеджером «" + toName + "» — нічого змінювати.");
+      return;
+    }
+
+    // ── Переносимо ──
+    sheet.getRange(found.row, COL.MANAGER).setValue(toName);
+    SpreadsheetApp.flush();
+    var res = transferLeadRow_(sheet, found.row, { skipViberId: sender.id, forceNotify: true });
+
+    sendViber(sender.id,
+      "✅ Контрагента передано!\n\n" +
+      "ПІБ: "      + (rowData[COL.NAME-1]  || "—") + "\n" +
+      "Телефон: "  + (rowData[COL.PHONE-1] || "—") + "\n" +
+      "ID: "       + (res && res.id ? res.id : "—") + "\n" +
+      "Було: "     + (current || "—") + "\n" +
+      "Стало: "    + toName + "\n\n" +
+      (managers[toName].viberId
+        ? "Менеджер «" + toName + "» отримав сповіщення, рядок уже в його таблиці."
+        : "⚠️ У менеджера «" + toName + "» не заповнений Viber ID — сповіщення не надіслано.") +
+      (res && res.moved ? "" : "\nℹ️ У попереднього менеджера цього рядка не було — просто призначили нового."));
+
+    Logger.log("handleTransferCommand: " + key + " → " + toName + " (ініціатор " + (senderName || "адмін") + ")");
+  } catch (err) {
+    Logger.log("handleTransferCommand: " + err);
+    sendViber(sender.id, "Помилка: " + err.toString());
+  }
+}
+
+function transferHelpText_() {
+  var managers = getManagers();
+  var list = Object.keys(managers).map(function(n) { return "  - " + n; }).join("\n");
+  return "Передати контрагента іншому менеджеру:\n\n" +
+         "/передати 0671234567 Дунас Богдан\n" +
+         "/передати LTEX-20260101-1234 Дунас\n\n" +
+         "або кількома рядками:\n" +
+         "/передати\nТелефон: 0671234567\nМенеджер: Дунас Богдан\n\n" +
+         "Клієнт автоматично зникне з таблиці попереднього менеджера\n" +
+         "і зʼявиться в таблиці нового.\n\n" +
+         "Менеджери:\n" + list;
+}
+
+// Пошук менеджера за неповним імʼям («Дунас», «богдан»)
+function resolveManagerName_(input, managers) {
+  var q     = input.toString().trim().toLowerCase();
+  var names = Object.keys(managers);
+
+  for (var i = 0; i < names.length; i++) {
+    if (names[i].toLowerCase() === q) return { name: names[i] };
+  }
+  var hits = names.filter(function(n) { return n.toLowerCase().indexOf(q) !== -1; });
+  if (hits.length === 1) return { name: hits[0] };
+  if (hits.length > 1) {
+    return { error: "Уточни менеджера — під «" + input + "» підходить кілька:\n" +
+                    hits.map(function(n) { return "  - " + n; }).join("\n") };
+  }
+  return { error: "❌ Менеджера «" + input + "» не знайдено.\n\nДоступні:\n" +
+                  names.map(function(n) { return "  - " + n; }).join("\n") };
+}
+
+// Пошук рядка в головній таблиці за ID або номером телефону
+function findMainRowByKey_(sheet, key) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < DATA_START) return null;
+  var data   = sheet.getRange(DATA_START, 1, lastRow - DATA_START + 1, MAIN_LAST_COL).getValues();
+  var raw    = key.toString().trim();
+  var byId   = /^ltex-/i.test(raw);
+  var phone9 = raw.replace(/\D/g, "").slice(-9);
+
+  for (var i = 0; i < data.length; i++) {
+    if (byId) {
+      var id = data[i][COL.ID-1] ? data[i][COL.ID-1].toString().trim() : "";
+      if (id.toLowerCase() === raw.toLowerCase()) return { row: DATA_START + i, data: data[i] };
+    } else if (phone9.length >= 8) {
+      var ph = data[i][COL.PHONE-1] ? data[i][COL.PHONE-1].toString().replace(/\D/g, "").slice(-9) : "";
+      if (ph.length >= 8 && ph === phone9) return { row: DATA_START + i, data: data[i] };
+    }
+  }
+  return null;
 }

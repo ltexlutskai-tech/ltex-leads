@@ -18,6 +18,7 @@ function setup(){
     ["Гуменюк Євген","менеджер","VID_GUM","F_GUM",new Date(),true],
     ["Дунас Богдан","менеджер","VID_DUN","F_DUN",new Date(),true],
     ["Стара Оксана","менеджер","VID_OLD","F_OLD",new Date(),false],
+    ["Бойко Богдана","менеджер","VID_BOY","F_BOY",new Date(),true],
   ]);
   const mainSS = new SS("MAIN"); mainSS.sheets=[main,mgrs];
   const gum = new SS("F_GUM"); gum.sheets=[new S("Клієнти", hdr().concat([
@@ -26,9 +27,10 @@ function setup(){
   ]))];
   const dun = new SS("F_DUN"); dun.sheets=[new S("Клієнти", hdr())];
   const old = new SS("F_OLD"); old.sheets=[new S("Клієнти", hdr())];
-  ctx.FILES = {MAIN:mainSS, F_GUM:gum, F_DUN:dun, F_OLD:old};
+  const boy = new SS("F_BOY"); boy.sheets=[new S("Клієнти", hdr())];
+  ctx.FILES = {MAIN:mainSS, F_GUM:gum, F_DUN:dun, F_OLD:old, F_BOY:boy};
   ctx.VIBER_SENT=[]; ctx.OWNER_MSGS=[]; ctx.CRM_PUSH=[]; ctx.LOG=[];
-  return {main, gum, dun, old};
+  return {main, gum, dun, old, boy};
 }
 
 let fails = 0;
@@ -109,6 +111,69 @@ ctx.cleanupManagerFilesFromMain(true);
 ok(f.gum.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="LTEX-1", "dry-run нічого не видалив");
 ctx.cleanupManagerFilesFromMain(false);
 ok(f.gum.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="", "реальний запуск прибрав чужий рядок");
+
+
+// ── Тести команди бота /передати ──
+const ADMIN = {id:"VID_ADMIN", name:"Адмін"};
+const GUM   = {id:"VID_GUM",   name:"Гуменюк"};
+const DUN   = {id:"VID_DUN",   name:"Дунас"};
+const CHUJY = {id:"VID_XXX",   name:"Хтось"};
+function owned(f){ f.main.getRange(5, ctx.COL.MANAGER).setValue("Гуменюк Євген"); }
+function last(id){ const m = ctx.VIBER_SENT.filter(v=>v.id===id); return m.length?m[m.length-1].text:""; }
+
+console.log("\n=== Тест 8: /передати від адміністратора ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати 0671234567 Дунас Богдан", ADMIN);
+ok(f.main.getRange(5, ctx.COL.MANAGER).getValue()==="Дунас Богдан", "менеджера змінено в головній");
+ok(f.gum.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="", "рядок зник у старого менеджера");
+ok(f.dun.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="LTEX-1", "рядок зʼявився у нового");
+ok(/Контрагента передано/.test(last("VID_ADMIN")), "ініціатор отримав підтвердження");
+ok(/передано контрагента/.test(last("VID_DUN")), "новий менеджер отримав сповіщення");
+ok(/передано іншому менеджеру/.test(last("VID_GUM")), "попередній менеджер отримав сповіщення");
+
+console.log("\n=== Тест 9: менеджер передає СВОГО клієнта ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати 0671234567 Дунас", GUM);
+ok(f.dun.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="LTEX-1", "перенос виконано");
+ok(/Контрагента передано/.test(last("VID_GUM")), "ініціатор отримав підтвердження");
+ok(ctx.VIBER_SENT.filter(v=>v.id==="VID_GUM" && /передано іншому менеджеру/.test(v.text)).length===0,
+   "ініціатору не продубльовано сповіщення «передано іншому»");
+
+console.log("\n=== Тест 10: чужого клієнта передати не можна ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати 0671234567 Бойко", DUN);
+ok(/закріплений за менеджером/.test(last("VID_DUN")), "відмова з поясненням");
+ok(f.main.getRange(5, ctx.COL.MANAGER).getValue()==="Гуменюк Євген", "менеджер не змінився");
+
+console.log("\n=== Тест 11: незареєстрований відправник ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати 0671234567 Дунас", CHUJY);
+ok(/лише зареєстрованим менеджерам/.test(last("VID_XXX")), "стороннього відсічено");
+
+console.log("\n=== Тест 12: неоднозначне імʼя менеджера ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати 0671234567 Богдан", ADMIN);
+ok(/підходить кілька/.test(last("VID_ADMIN")), "просить уточнити (Дунас Богдан / Бойко Богдана)");
+ok(f.main.getRange(5, ctx.COL.MANAGER).getValue()==="Гуменюк Євген", "нічого не змінено");
+
+console.log("\n=== Тест 13: помилки і формати ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати", ADMIN);
+ok(/Передати контрагента іншому менеджеру/.test(last("VID_ADMIN")), "порожня команда → підказка");
+ctx.handleTransferCommand("/передати 0999999999 Дунас", ADMIN);
+ok(/не знайдено в таблиці/.test(last("VID_ADMIN")), "невідомий номер → зрозуміла помилка");
+ctx.handleTransferCommand("/передати LTEX-1 Дунас", ADMIN);
+ok(f.dun.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="LTEX-1", "пошук за ID працює");
+
+console.log("\n=== Тест 14: багаторядковий формат ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати\nТелефон: 0671234567\nМенеджер: Дунас Богдан", ADMIN);
+ok(f.dun.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="LTEX-1", "перенос за полями Телефон/Менеджер");
+
+console.log("\n=== Тест 15: клієнт уже в цього менеджера ===");
+f = setup();
+ctx.handleTransferCommand("/передати 0671234567 Дунас Богдан", ADMIN);
+ok(/уже закріплений/.test(last("VID_ADMIN")), "повідомляє, що змінювати нічого");
 
 console.log("\n" + (fails ? "❌ Провалено перевірок: "+fails : "✅ Усі перевірки пройдено"));
 process.exit(fails?1:0);

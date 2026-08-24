@@ -15,6 +15,8 @@ var MGR_COL = {NAME:1,ROLE:2,VIBER_ID:3,FILE_ID:4,ADDED:5,ACTIVE:6};
 var MAIN_LAST_COL = 19, MGR_LAST_COL = 18;
 var MGR_COL_NEW_STATUS = 17, MGR_COL_NEW_COMMENT = 18;
 var MGR_DATA_START = 5;
+var ADMIN_VIBER_ID = "VID_ADMIN";
+var NOTIFY_IDS = ["VID_ADMIN"];
 
 function pad(row, n){ while(row.length<n) row.push(""); return row; }
 
