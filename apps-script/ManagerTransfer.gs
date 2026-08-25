@@ -107,8 +107,12 @@ function checkTransferSetup() {
     rep.push((ok ? "✅ " : "❌ ") + pair[0] + "()" + (ok ? "" : " — " + t));
   });
   if (missing) {
-    rep.push("⚠️ Модуль не побачив " + missing + " функцій CRM. Перевір, чи основний код");
-    rep.push("   (Code.gs з getManagers/syncToManager/sendViber) на місці в цьому ж проєкті.");
+    rep.push("⚠️ Модуль не бачить " + missing + " функцій CRM — найімовірніше, він вставлений");
+    rep.push("   НЕ В ТОЙ ПРОЄКТ Apps Script (напр. у скрипт, прив’язаний до таблиці,");
+    rep.push("   а не в основний проєкт бота).");
+    rep.push("   Модуль має лежати в тому самому проєкті, де є doPost, parseAndSave,");
+    rep.push("   getManagers, sendViber — тобто в проєкті, який опублікований як веб-застосунок");
+    rep.push("   (його адреса = WEBHOOK_URL). Перенеси файл туди — і все запрацює.");
   }
 
   // Практична перевірка: реально викликаємо getManagers()
