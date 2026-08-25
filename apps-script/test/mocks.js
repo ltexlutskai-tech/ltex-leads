@@ -5,6 +5,7 @@ var VIBER_SENT = [];
 var OWNER_MSGS = [];
 var CRM_PUSH   = [];
 
+//<<APP_CONST>>
 var MAIN_SHEET = "🔒 2026";
 var MGR_SHEET  = "⚙️ Менеджери";
 var DATA_START = 5;
@@ -17,6 +18,7 @@ var MGR_COL_NEW_STATUS = 17, MGR_COL_NEW_COMMENT = 18;
 var MGR_DATA_START = 5;
 var ADMIN_VIBER_ID = "VID_ADMIN";
 var NOTIFY_IDS = ["VID_ADMIN"];
+//<<END_APP_CONST>>
 
 function pad(row, n){ while(row.length<n) row.push(""); return row; }
 
@@ -102,6 +104,24 @@ var SpreadsheetApp = {
   flush: function(){}
 };
 
+var PropertiesService = {
+  getScriptProperties: function(){
+    return { getProperty: function(k){ return ({VIBER_TOKEN:"TEST", ANTHROPIC_KEY:"TEST"})[k] || null; },
+             setProperty: function(){} };
+  }
+};
+var UrlFetchApp = {
+  fetch: function(url, opts){
+    var body = opts && opts.payload ? JSON.parse(opts.payload) : {};
+    if (url.indexOf("send_message") !== -1) VIBER_SENT.push({id: body.receiver, text: body.text});
+    return { getContentText: function(){ return JSON.stringify({status:0}); }, getResponseCode: function(){ return 200; } };
+  }
+};
+var ContentService = {
+  MimeType: {JSON:"json"},
+  createTextOutput: function(t){ return { setMimeType: function(){ return {text:t}; } }; }
+};
+var GmailApp = { search: function(){ return []; } };
 var LockService = { getScriptLock: function(){ return { tryLock:function(){return true;}, releaseLock:function(){} }; } };
 var ScriptApp = {
   getProjectTriggers: function(){ return []; },
@@ -110,6 +130,7 @@ var ScriptApp = {
 var Session = { getScriptTimeZone: function(){ return "Europe/Kyiv"; } };
 var Utilities = { formatDate: function(d){ return d.toISOString().substring(0,10); } };
 
+//<<APP_FN>>
 function generateId(){ return "LTEX-TEST-"+Math.floor(Math.random()*9000+1000); }
 function sendViber(id,text){ VIBER_SENT.push({id:id,text:text}); }
 function notifyOwners(text){ OWNER_MSGS.push(text); }
@@ -168,3 +189,4 @@ function getManagers(){
   });
   return out;
 }
+//<<END_APP_FN>>
