@@ -652,9 +652,10 @@ function cleanupManagerFilesFromMain(dryRun) {
 //     Телефон: 0671234567
 //     Менеджер: Дунас Богдан
 //
-// ▶ ПОВТОРНИЙ ЗАПИТ (клієнт уже є в CRM і звернувся знову) — після імені
-//   менеджера через «|» або з нового рядка коротко опиши нове звернення:
-//     /передати 0671234567 Дунас Богдан | Питає ціну на палету, писав у TikTok
+// ▶ ПОВТОРНИЙ ЗАПИТ (клієнт уже є в CRM і звернувся знову) — просто допиши
+//   через пробіл після імені менеджера короткий опис нового звернення:
+//     /передати 0671234567 Дунас Богдан Питає ціну на палету, писав у TikTok
+//   (роздільник «|» або новий рядок теж працюють, але не обовʼязкові)
 //     /передати
 //     Телефон: 0671234567
 //     Менеджер: Дунас Богдан
@@ -671,41 +672,11 @@ function handleTransferCommand(text, sender) {
   var T = TR();
   try {
     var raw = text.replace(/^\/(передати|передать|transfer)\s*/i, "").trim();
-    var key = "", mgrInput = "", note = "";
-
-    if (/(телефон|тел|id|менеджер)\s*:/i.test(raw)) {
-      var lines = raw.split("\n").map(function(l){ return l.trim(); }).filter(String);
-      function field(keys) {
-        for (var i = 0; i < keys.length; i++) {
-          for (var j = 0; j < lines.length; j++) {
-            if (lines[j].toLowerCase().indexOf(keys[i] + ":") === 0) {
-              return lines[j].substring(lines[j].indexOf(":") + 1).trim();
-            }
-          }
-        }
-        return "";
-      }
-      key      = field(["телефон", "тел", "id", "ід"]);
-      mgrInput = field(["менеджер"]);
-      note     = field(["запит", "коментар", "опис", "повторний запит"]);
-    } else {
-      // Опис нового звернення відділяється «|» або переносом рядка
-      var head = raw, tail = "";
-      var bar  = raw.indexOf("|");
-      var nl   = raw.indexOf("\n");
-      var cut  = (bar === -1) ? nl : (nl === -1 ? bar : Math.min(bar, nl));
-      if (cut !== -1) {
-        head = raw.substring(0, cut).trim();
-        tail = raw.substring(cut + 1).trim();
-      }
-      note = tail.replace(/^[|\s]+/, "").trim();
-      var parts = head.split(/\s+/).filter(String);
-      if (parts.length >= 2) { key = parts.shift(); mgrInput = parts.join(" "); }
-    }
-
-    if (!key || !mgrInput) { sendViber(sender.id, transferHelpText_()); return; }
-
     var managers = getManagers();
+    var p = parseTransferInput_(raw, managers);
+    var key = p.key, note = p.note;
+
+    if (p.empty) { sendViber(sender.id, transferHelpText_()); return; }
 
     // ── Хто просить ──
     var senderName = "";
@@ -719,9 +690,8 @@ function handleTransferCommand(text, sender) {
     }
 
     // ── Кому передаємо ──
-    var resolved = resolveManagerName_(mgrInput, managers);
-    if (resolved.error) { sendViber(sender.id, resolved.error); return; }
-    var toName = resolved.name;
+    if (p.error) { sendViber(sender.id, p.error); return; }
+    var toName = p.manager;
 
     // ── Якого клієнта ──
     var sheet = SpreadsheetApp.openById(T.MAIN_FILE_ID).getSheetByName(T.MAIN_SHEET);
@@ -783,15 +753,77 @@ function handleTransferCommand(text, sender) {
   }
 }
 
+// Розбирає текст команди. Імʼя менеджера розпізнається зі списку
+// зареєстрованих, тому опис нового звернення можна писати просто через
+// пробіл після імені — роздільник не потрібен:
+//     0671234567 Дунас Богдан Питає ціну на палету
+// Працюють і явні роздільники: «|» та новий рядок, а також поля
+// «Телефон:/ID:», «Менеджер:», «Запит:».
+// Повертає {key, manager, note, error, empty}.
+function parseTransferInput_(raw, managers) {
+  var out = { key: "", manager: "", note: "", error: "", empty: false };
+
+  // Формат з полями
+  if (/(телефон|тел|id|ід|менеджер)\s*:/i.test(raw)) {
+    var lines = raw.split("\n").map(function(l){ return l.trim(); }).filter(String);
+    function field(keys) {
+      for (var i = 0; i < keys.length; i++) {
+        for (var j = 0; j < lines.length; j++) {
+          if (lines[j].toLowerCase().indexOf(keys[i] + ":") === 0) {
+            return lines[j].substring(lines[j].indexOf(":") + 1).trim();
+          }
+        }
+      }
+      return "";
+    }
+    out.key  = field(["телефон", "тел", "id", "ід"]);
+    out.note = field(["запит", "коментар", "опис", "повторний запит"]);
+    var mgrField = field(["менеджер"]);
+    if (!out.key || !mgrField) { out.empty = true; return out; }
+    var rf = resolveManagerName_(mgrField, managers);
+    if (rf.error) { out.error = rf.error; return out; }
+    out.manager = rf.name;
+    return out;
+  }
+
+  // Явний роздільник опису — «|» або новий рядок (не обовʼязковий)
+  var head = raw, tail = "";
+  var bar = raw.indexOf("|"), nl = raw.indexOf("\n");
+  var cut = (bar === -1) ? nl : (nl === -1 ? bar : Math.min(bar, nl));
+  if (cut !== -1) { head = raw.substring(0, cut).trim(); tail = raw.substring(cut + 1).trim(); }
+
+  var tokens = head.split(/\s+/).filter(String);
+  if (tokens.length < 2) { out.empty = true; return out; }
+  out.key = tokens.shift();
+
+  // Імʼя менеджера = найдовший префікс, який однозначно вказує на менеджера.
+  // Усі слова після нього — опис нового звернення.
+  for (var n = Math.min(tokens.length, 5); n >= 1; n--) {
+    var r = resolveManagerName_(tokens.slice(0, n).join(" "), managers);
+    if (r.name) {
+      out.manager = r.name;
+      out.note = [tokens.slice(n).join(" ").trim(), tail].filter(String).join(" ").trim();
+      return out;
+    }
+  }
+
+  // Менеджера не впізнали — пояснюємо чому
+  var e1 = resolveManagerName_(tokens[0], managers).error || "";
+  if (e1.indexOf("підходить кілька") !== -1) { out.error = e1; return out; }
+  var probe = tokens.slice(0, Math.min(2, tokens.length)).join(" ");
+  out.error = resolveManagerName_(probe, managers).error || e1;
+  return out;
+}
+
 function transferHelpText_() {
   var managers = getManagers();
   var list = Object.keys(managers).map(function(n) { return "  - " + n; }).join("\n");
   return "Передати контрагента іншому менеджеру:\n\n" +
          "/передати 0671234567 Дунас Богдан\n" +
          "/передати LTEX-20260101-1234 Дунас\n\n" +
-         "Якщо це ПОВТОРНИЙ ЗАПИТ — після імені менеджера через «|»\n" +
-         "коротко опишіть нове звернення:\n" +
-         "/передати 0671234567 Дунас Богдан | Питає ціну на палету, писав у TikTok\n\n" +
+         "Якщо це ПОВТОРНИЙ ЗАПИТ — просто допишіть після імені менеджера\n" +
+         "короткий опис нового звернення:\n" +
+         "/передати 0671234567 Дунас Богдан Питає ціну на палету, писав у TikTok\n\n" +
          "або кількома рядками:\n" +
          "/передати\nТелефон: 0671234567\nМенеджер: Дунас Богдан\nЗапит: Питає ціну на палету\n\n" +
          "Клієнт автоматично зникне з таблиці попереднього менеджера\n" +

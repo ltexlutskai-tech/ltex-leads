@@ -177,6 +177,19 @@ ok(/уже закріплений/.test(last("VID_ADMIN")), "повідомля�
 
 
 // ── Тест 16: константи з Code.gs НЕ видно (баг «MAIN_FILE_ID is not defined») ──
+// ── Тести розбору з описом через пробіл ──
+console.log("\n=== Тест 15б: неоднозначне імʼя + опис ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати 0671234567 Богдан Питає ціну", ADMIN);
+ok(/підходить кілька/.test(last("VID_ADMIN")), "просить уточнити, а не приймає опис за імʼя");
+ok(f.main.getRange(5, ctx.COL.MANAGER).getValue()==="Гуменюк Євген", "нічого не змінено");
+
+console.log("\n=== Тест 15в: невідомий менеджер + опис ===");
+f = setup(); owned(f);
+ctx.handleTransferCommand("/передати 0671234567 Петренко Олег Питає ціну", ADMIN);
+ok(/не знайдено/.test(last("VID_ADMIN")), "зрозуміла помилка про менеджера");
+ok(/Петренко Олег/.test(last("VID_ADMIN")), "у помилці саме імʼя, а не весь текст");
+
 console.log("\n=== Тест 16: робота без констант із Code.gs ===");
 f = setup(); owned(f);
 const saved = {};
