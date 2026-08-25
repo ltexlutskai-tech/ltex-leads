@@ -199,5 +199,18 @@ ok(f.dun.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="LTEX-1", "пер
 ok(f.gum.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="", "рядок прибрано у попереднього менеджера");
 Object.keys(saved).forEach(k => { ctx[k]=saved[k]; });
 
+
+// ── Тест 17: діагностика checkTransferSetup ──
+console.log("\n=== Тест 17: checkTransferSetup ===");
+f = setup(); ctx.LOG = [];
+let diagErr = null;
+try { ctx.checkTransferSetup(); } catch (e) { diagErr = e; }
+const diag = ctx.LOG.join("\n");
+ok(!diagErr, "діагностика відпрацювала без помилки" + (diagErr ? ": "+diagErr.message : ""));
+ok(/✅ getManagers\(\)/.test(diag), "наявну функцію CRM визначено як доступну");
+ok(/✅ syncToManager\(\)/.test(diag) && /✅ sendViber\(\)/.test(diag), "решту функцій теж видно");
+ok(/getManagers\(\) повернув 3 менеджер/.test(diag), "реальний виклик getManagers() відпрацював");
+ok(/Головна таблиця відкривається/.test(diag), "головна таблиця перевірена");
+
 console.log("\n" + (fails ? "❌ Провалено перевірок: "+fails : "✅ Усі перевірки пройдено"));
 process.exit(fails?1:0);

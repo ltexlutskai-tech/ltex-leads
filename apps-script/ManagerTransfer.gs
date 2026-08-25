@@ -88,11 +88,39 @@ function checkTransferSetup() {
     rep.push((visible ? "✅ " : "↩️ ") + pair[0] + (visible ? " — з Code.gs" : " — запасне значення модуля"));
   });
 
-  ["getManagers","syncToManager","sendViber","notifyOwners","generateId","pushLeadToLtexCrm"]
-    .forEach(function(fn) {
-      var ok = (typeof this[fn] === "function");
-      rep.push((ok ? "✅ " : "❌ ") + fn + "()" + (ok ? "" : " — НЕ ЗНАЙДЕНО! Перевір, чи на місці основний код CRM"));
-    }, this);
+  // Функції перевіряємо ЗА ІМЕНЕМ: у V8 функції з іншого файлу не завжди
+  // доступні через globalThis, але за ідентифікатором — доступні.
+  var fnChecks = [
+    ["getManagers",       function(){ return typeof getManagers;       }],
+    ["syncToManager",     function(){ return typeof syncToManager;     }],
+    ["sendViber",         function(){ return typeof sendViber;         }],
+    ["notifyOwners",      function(){ return typeof notifyOwners;      }],
+    ["generateId",        function(){ return typeof generateId;        }],
+    ["pushLeadToLtexCrm", function(){ return typeof pushLeadToLtexCrm; }]
+  ];
+  var missing = 0;
+  fnChecks.forEach(function(pair) {
+    var t;
+    try { t = pair[1](); } catch (err) { t = "недоступна (" + err + ")"; }
+    var ok = (t === "function");
+    if (!ok) missing++;
+    rep.push((ok ? "✅ " : "❌ ") + pair[0] + "()" + (ok ? "" : " — " + t));
+  });
+  if (missing) {
+    rep.push("⚠️ Модуль не побачив " + missing + " функцій CRM. Перевір, чи основний код");
+    rep.push("   (Code.gs з getManagers/syncToManager/sendViber) на місці в цьому ж проєкті.");
+  }
+
+  // Практична перевірка: реально викликаємо getManagers()
+  try {
+    var mgrs = getManagers();
+    var names = Object.keys(mgrs);
+    rep.push("✅ getManagers() повернув " + names.length + " менеджерів: " + names.join(", "));
+    names.forEach(function(n) {
+      rep.push("     " + n + " — файл: " + (mgrs[n].fileId ? "є" : "НЕМАЄ") +
+               ", Viber ID: " + (mgrs[n].viberId ? "є" : "НЕМАЄ"));
+    });
+  } catch (err) { rep.push("❌ Виклик getManagers(): " + err); }
 
   try {
     var sh = SpreadsheetApp.openById(T.MAIN_FILE_ID).getSheetByName(T.MAIN_SHEET);

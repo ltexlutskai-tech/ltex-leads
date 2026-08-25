@@ -103,6 +103,10 @@ var SpreadsheetApp = {
 };
 
 var LockService = { getScriptLock: function(){ return { tryLock:function(){return true;}, releaseLock:function(){} }; } };
+var ScriptApp = {
+  getProjectTriggers: function(){ return []; },
+  newTrigger: function(){ return {forSpreadsheet:function(){return this;}, onEdit:function(){return this;}, create:function(){}}; }
+};
 var Session = { getScriptTimeZone: function(){ return "Europe/Kyiv"; } };
 var Utilities = { formatDate: function(d){ return d.toISOString().substring(0,10); } };
 
