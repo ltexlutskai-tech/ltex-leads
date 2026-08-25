@@ -175,5 +175,29 @@ f = setup();
 ctx.handleTransferCommand("/передати 0671234567 Дунас Богдан", ADMIN);
 ok(/уже закріплений/.test(last("VID_ADMIN")), "повідомляє, що змінювати нічого");
 
+
+// ── Тест 16: константи з Code.gs НЕ видно (баг «MAIN_FILE_ID is not defined») ──
+console.log("\n=== Тест 16: робота без констант із Code.gs ===");
+f = setup(); owned(f);
+const saved = {};
+["MAIN_FILE_ID","MAIN_SHEET","MGR_SHEET","DATA_START","MAIN_LAST_COL","MGR_LAST_COL",
+ "MGR_DATA_START","MGR_COL_NEW_STATUS","MGR_COL_NEW_COMMENT","COL","MGR_COL",
+ "ADMIN_VIBER_ID","NOTIFY_IDS"].forEach(k => { saved[k]=ctx[k]; ctx[k]=undefined; });
+// запасні значення модуля перенаправляємо на тестові файли
+ctx.TR_MAIN_FILE_ID = "MAIN";
+ctx.TR_MAIN_SHEET   = "🔒 2026";
+ctx.TR_MGR_SHEET    = "⚙️ Менеджери";
+ctx.TR_ADMIN_VIBER_ID = "VID_ADMIN";
+ctx.TR_NOTIFY_IDS   = ["VID_ADMIN"];
+let boom = null;
+try {
+  ctx.handleTransferCommand("/передати 0671234567 Дунас Богдан", ADMIN);
+  ctx.onMainEditTransfer({ range: f.main.getRange(5, 11, 1, 1), oldValue: "Гуменюк Євген" });
+} catch (e) { boom = e; }
+ok(!boom, "модуль не падає з ReferenceError" + (boom ? ": "+boom.message : ""));
+ok(f.dun.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="LTEX-1", "перенос спрацював на запасних константах");
+ok(f.gum.getSheets()[0].getRange(5,1,1,18).getValues()[0][0]==="", "рядок прибрано у попереднього менеджера");
+Object.keys(saved).forEach(k => { ctx[k]=saved[k]; });
+
 console.log("\n" + (fails ? "❌ Провалено перевірок: "+fails : "✅ Усі перевірки пройдено"));
 process.exit(fails?1:0);

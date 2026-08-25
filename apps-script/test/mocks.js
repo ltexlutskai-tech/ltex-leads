@@ -155,7 +155,7 @@ function syncToManager(rowData,rowId,fileId,managerName) {
 
 function getManagers(){
   var out={};
-  var sheet = FILES[MAIN_FILE_ID].getSheetByName(MGR_SHEET);
+  var sheet = FILES["MAIN"].getSheetByName("⚙️ Менеджери");
   var data = sheet.getRange(2,1,sheet.getLastRow()-1,6).getValues();
   data.forEach(function(r){
     if (!r[0]) return;
