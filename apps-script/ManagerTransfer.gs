@@ -24,6 +24,7 @@
 //
 // ▶ РУЧНІ ІНСТРУМЕНТИ:
 //     reassignLead("LTEX-20260101-1234", "Дунас Богдан")
+//     reassignLead("LTEX-…", "Дунас Богдан", "Повторний запит: питає ціну")
 //     reassignLeadByPhone("0671234567", "Дунас Богдан")
 //     cleanupManagerFilesFromMain(true)   // спершу перевірка (нічого не видаляє)
 //     cleanupManagerFilesFromMain(false)  // реальне прибирання «чужих» рядків
@@ -226,6 +227,8 @@ function onMainEditTransfer(e) {
 // головної таблиці для одного рядка.
 // opts.skipViberId — кому НЕ слати сповіщення (той, хто сам ініціював
 // перенос командою в боті: він і так отримає відповідь).
+// opts.repeatNote — короткий опис НОВОГО звернення клієнта. Якщо заданий,
+// новий менеджер отримує повідомлення «повторний запит» з цим описом.
 // Повертає {moved: true/false, id, from: [...], to: "..."}.
 function transferLeadRow_(sheet, row, opts) {
   var T = TR();
@@ -303,13 +306,25 @@ function transferLeadRow_(sheet, row, opts) {
   var card      = leadCard_(rowData);
 
   // 4) Новому менеджеру
+  var note = opts.repeatNote ? opts.repeatNote.toString().trim() : "";
   if (toName && managers[toName] && managers[toName].viberId &&
       managers[toName].viberId !== opts.skipViberId) {
-    sendViber(managers[toName].viberId,
-      "📥 Вам передано контрагента!\n\n" + card +
-      "\nПопередній менеджер: " + fromLabel +
-      "\n\n⚠️ Потрібно актуалізувати інформацію та продовжити роботу." +
-      "\nКлієнт уже у вашій таблиці.");
+    if (note) {
+      // Повторний запит: опис нового звернення — найперше, що бачить менеджер
+      sendViber(managers[toName].viberId,
+        "🔁 ПОВТОРНИЙ ЗАПИТ — вам передано контрагента!\n\n" +
+        "❗ Новий запит: " + note + "\n\n" + card +
+        "\nПопередній менеджер: " + fromLabel +
+        "\n\n⚠️ Клієнт уже звертався до нас раніше. Подивіться історію в колонці" +
+        " «Цікавить», актуалізуйте інформацію та відпрацюйте новий запит." +
+        "\nКлієнт уже у вашій таблиці.");
+    } else {
+      sendViber(managers[toName].viberId,
+        "📥 Вам передано контрагента!\n\n" + card +
+        "\nПопередній менеджер: " + fromLabel +
+        "\n\n⚠️ Потрібно актуалізувати інформацію та продовжити роботу." +
+        "\nКлієнт уже у вашій таблиці.");
+    }
   }
 
   // 5) Попереднім менеджерам
@@ -320,16 +335,19 @@ function transferLeadRow_(sheet, row, opts) {
     sendViber(vid,
       "📤 Контрагента передано іншому менеджеру\n\n" + card +
       "\nНовий менеджер: " + (toName || "—") +
+      (note ? "\nПричина: повторний запит — " + note : "") +
       "\n\nРядок прибрано з вашої таблиці — працювати по ньому більше не потрібно.");
   }
 
   // 6) Керівникам + журнал
-  notifyOwners("🔄 Перепризначення контрагента\n\nID: " + rowId +
+  notifyOwners((note ? "🔁 Повторний запит + перепризначення" : "🔄 Перепризначення контрагента") +
+               "\n\nID: " + rowId +
                "\nПІБ: " + (name || "—") +
                "\nТелефон: " + (rowData[T.COL.PHONE-1] || "—") +
                "\nБуло: " + fromLabel +
-               "\nСтало: " + (toName || "—"));
-  logTransfer_(rowId, fromLabel, toName, name, rowData[T.COL.PHONE-1]);
+               "\nСтало: " + (toName || "—") +
+               (note ? "\nЗапит: " + note : ""));
+  logTransfer_(rowId, fromLabel, toName, name, rowData[T.COL.PHONE-1], note);
 
   // 7) Місток у нашу систему — щоб там теж змінився менеджер
   if (TRANSFER_PUSH_TO_CRM) {
@@ -487,27 +505,29 @@ function leadCard_(rowData) {
   return txt;
 }
 
-function logTransfer_(rowId, fromName, toName, clientName, phone) {
+function logTransfer_(rowId, fromName, toName, clientName, phone, note) {
   var T = TR();
   try {
     var ss  = SpreadsheetApp.openById(T.MAIN_FILE_ID);
     var log = ss.getSheetByName(TRANSFER_LOG_SHEET);
     if (!log) {
       log = ss.insertSheet(TRANSFER_LOG_SHEET);
-      log.getRange(1, 1, 1, 6)
-         .setValues([["Дата", "ID ліда", "Було", "Стало", "ПІБ", "Телефон"]])
+      log.getRange(1, 1, 1, 7)
+         .setValues([["Дата", "ID ліда", "Було", "Стало", "ПІБ", "Телефон", "Повторний запит"]])
          .setFontWeight("bold");
       log.setFrozenRows(1);
       log.hideSheet();
     }
-    log.appendRow([new Date(), rowId, fromName || "—", toName || "—", clientName || "", phone || ""]);
+    // Журнал міг бути створений раніше, без 7-ї колонки
+    if (!log.getRange(1, 7).getValue()) log.getRange(1, 7).setValue("Повторний запит").setFontWeight("bold");
+    log.appendRow([new Date(), rowId, fromName || "—", toName || "—", clientName || "", phone || "", note || ""]);
   } catch (err) { Logger.log("logTransfer_: " + err); }
 }
 
 
 // ── Ручне перепризначення (з редактора Apps Script) ───────
 
-function reassignLead(rowId, newManagerName) {
+function reassignLead(rowId, newManagerName, repeatNote) {
   var T = TR();
   var sheet = SpreadsheetApp.openById(T.MAIN_FILE_ID).getSheetByName(T.MAIN_SHEET);
   if (!sheet) { Logger.log("Аркуш «" + T.MAIN_SHEET + "» не знайдено"); return; }
@@ -523,16 +543,24 @@ function reassignLead(rowId, newManagerName) {
   for (var i = 0; i < ids.length; i++) {
     if (!ids[i][0] || ids[i][0].toString().trim() !== rowId) continue;
     var row = T.DATA_START + i;
+    if (repeatNote) {
+      var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy");
+      var prev  = sheet.getRange(row, T.COL.INTEREST).getValue();
+      prev = prev ? prev.toString().trim() : "";
+      var line  = "🔁 Повторний запит " + stamp + ": " + repeatNote;
+      sheet.getRange(row, T.COL.INTEREST).setValue(prev ? prev + "\n" + line : line);
+      sheet.getRange(row, T.COL.STATUS).setValue("Очікує");
+    }
     sheet.getRange(row, T.COL.MANAGER).setValue(newManagerName);
     SpreadsheetApp.flush();
-    transferLeadRow_(sheet, row, {forceNotify: true});
+    transferLeadRow_(sheet, row, {forceNotify: true, repeatNote: repeatNote || ""});
     Logger.log("✅ " + rowId + " → " + newManagerName);
     return;
   }
   Logger.log("❌ Лід " + rowId + " не знайдено в головній таблиці");
 }
 
-function reassignLeadByPhone(phone, newManagerName) {
+function reassignLeadByPhone(phone, newManagerName, repeatNote) {
   var T = TR();
   var sheet = SpreadsheetApp.openById(T.MAIN_FILE_ID).getSheetByName(T.MAIN_SHEET);
   if (!sheet) return;
@@ -548,7 +576,7 @@ function reassignLeadByPhone(phone, newManagerName) {
         id = generateId();
         sheet.getRange(T.DATA_START + i, T.COL.ID).setValue(id);
       }
-      reassignLead(id, newManagerName);
+      reassignLead(id, newManagerName, repeatNote);
       return;
     }
   }
@@ -624,6 +652,17 @@ function cleanupManagerFilesFromMain(dryRun) {
 //     Телефон: 0671234567
 //     Менеджер: Дунас Богдан
 //
+// ▶ ПОВТОРНИЙ ЗАПИТ (клієнт уже є в CRM і звернувся знову) — після імені
+//   менеджера через «|» або з нового рядка коротко опиши нове звернення:
+//     /передати 0671234567 Дунас Богдан | Питає ціну на палету, писав у TikTok
+//     /передати
+//     Телефон: 0671234567
+//     Менеджер: Дунас Богдан
+//     Запит: Питає ціну на палету, писав у TikTok
+//   Тоді опис дописується в «Цікавить» головної таблиці (історія звернень
+//   зберігається), статус повертається в «Очікує», а новий менеджер отримує
+//   повідомлення «🔁 ПОВТОРНИЙ ЗАПИТ» з текстом звернення.
+//
 // ▶ Права:
 //     адміністратор і керівники (T.ADMIN, T.OWNERS) — будь-якого клієнта;
 //     менеджер — тільки своїх клієнтів.
@@ -632,7 +671,7 @@ function handleTransferCommand(text, sender) {
   var T = TR();
   try {
     var raw = text.replace(/^\/(передати|передать|transfer)\s*/i, "").trim();
-    var key = "", mgrInput = "";
+    var key = "", mgrInput = "", note = "";
 
     if (/(телефон|тел|id|менеджер)\s*:/i.test(raw)) {
       var lines = raw.split("\n").map(function(l){ return l.trim(); }).filter(String);
@@ -648,8 +687,19 @@ function handleTransferCommand(text, sender) {
       }
       key      = field(["телефон", "тел", "id", "ід"]);
       mgrInput = field(["менеджер"]);
+      note     = field(["запит", "коментар", "опис", "повторний запит"]);
     } else {
-      var parts = raw.split(/\s+/).filter(String);
+      // Опис нового звернення відділяється «|» або переносом рядка
+      var head = raw, tail = "";
+      var bar  = raw.indexOf("|");
+      var nl   = raw.indexOf("\n");
+      var cut  = (bar === -1) ? nl : (nl === -1 ? bar : Math.min(bar, nl));
+      if (cut !== -1) {
+        head = raw.substring(0, cut).trim();
+        tail = raw.substring(cut + 1).trim();
+      }
+      note = tail.replace(/^[|\s]+/, "").trim();
+      var parts = head.split(/\s+/).filter(String);
       if (parts.length >= 2) { key = parts.shift(); mgrInput = parts.join(" "); }
     }
 
@@ -696,18 +746,31 @@ function handleTransferCommand(text, sender) {
       return;
     }
 
+    // ── Повторний запит: історія звернень + повернення в роботу ──
+    if (note) {
+      var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy");
+      var who   = senderName || (sender.name ? sender.name : "адмін");
+      var prev  = rowData[T.COL.INTEREST-1] ? rowData[T.COL.INTEREST-1].toString().trim() : "";
+      var line  = "🔁 Повторний запит " + stamp + " (" + who + "): " + note;
+      sheet.getRange(found.row, T.COL.INTEREST).setValue(prev ? prev + "\n" + line : line);
+      // Клієнт звернувся знову — повертаємо в роботу
+      sheet.getRange(found.row, T.COL.STATUS).setValue("Очікує");
+    }
+
     // ── Переносимо ──
     sheet.getRange(found.row, T.COL.MANAGER).setValue(toName);
     SpreadsheetApp.flush();
-    var res = transferLeadRow_(sheet, found.row, { skipViberId: sender.id, forceNotify: true });
+    var res = transferLeadRow_(sheet, found.row,
+      { skipViberId: sender.id, forceNotify: true, repeatNote: note });
 
     sendViber(sender.id,
-      "✅ Контрагента передано!\n\n" +
+      (note ? "✅ Контрагента передано як ПОВТОРНИЙ ЗАПИТ!\n\n" : "✅ Контрагента передано!\n\n") +
       "ПІБ: "      + (rowData[T.COL.NAME-1]  || "—") + "\n" +
       "Телефон: "  + (rowData[T.COL.PHONE-1] || "—") + "\n" +
       "ID: "       + (res && res.id ? res.id : "—") + "\n" +
       "Було: "     + (current || "—") + "\n" +
-      "Стало: "    + toName + "\n\n" +
+      "Стало: "    + toName + "\n" +
+      (note ? "Запит: " + note + "\n(дописано в «Цікавить», статус → Очікує)\n" : "") + "\n" +
       (managers[toName].viberId
         ? "Менеджер «" + toName + "» отримав сповіщення, рядок уже в його таблиці."
         : "⚠️ У менеджера «" + toName + "» не заповнений Viber ID — сповіщення не надіслано.") +
@@ -726,10 +789,15 @@ function transferHelpText_() {
   return "Передати контрагента іншому менеджеру:\n\n" +
          "/передати 0671234567 Дунас Богдан\n" +
          "/передати LTEX-20260101-1234 Дунас\n\n" +
+         "Якщо це ПОВТОРНИЙ ЗАПИТ — після імені менеджера через «|»\n" +
+         "коротко опишіть нове звернення:\n" +
+         "/передати 0671234567 Дунас Богдан | Питає ціну на палету, писав у TikTok\n\n" +
          "або кількома рядками:\n" +
-         "/передати\nТелефон: 0671234567\nМенеджер: Дунас Богдан\n\n" +
+         "/передати\nТелефон: 0671234567\nМенеджер: Дунас Богдан\nЗапит: Питає ціну на палету\n\n" +
          "Клієнт автоматично зникне з таблиці попереднього менеджера\n" +
-         "і зʼявиться в таблиці нового.\n\n" +
+         "і зʼявиться в таблиці нового. При повторному запиті менеджер\n" +
+         "отримає позначку «🔁 ПОВТОРНИЙ ЗАПИТ» з вашим описом,\n" +
+         "опис дописується в «Цікавить», а статус стає «Очікує».\n\n" +
          "Менеджери:\n" + list;
 }
 
