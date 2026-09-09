@@ -9,39 +9,55 @@
 //   1. У кожному рядку зʼявляється кнопка «📨 Надіслати» —
 //      це формула =HYPERLINK(...) на наш веб-застосунок.
 //   2. Менеджер натискає → відкривається сторінка з УНІКАЛЬНИМ
-//      посиланням на Telegram-канал ДЛЯ ОБЛАСТІ цього клієнта
-//      + готовим текстом повідомлення (кнопка «Скопіювати»).
+//      посиланням на Telegram-канал (персональним для цього
+//      клієнта, а без бота — для його області) і готовим
+//      текстом повідомлення (кнопка «Скопіювати»).
 //   3. Статус «✅ Надіслано», дата і саме посилання пишуться
 //      в таблицю В МОМЕНТ відкриття сторінки — менеджер нічого
 //      не відмічає руками. Отримати посилання, не залишивши
 //      сліду, неможливо: його видає лише ця сторінка.
 //   4. Кожне натискання пишеться в лог «_tg_log»:
 //      дата, ID, ПІБ, телефон, область, менеджер, посилання, джерело.
-//   5. Посилання унікальне для області → у Telegram видно,
-//      хто саме і за яким посиланням приєднався.
+//   5. Посилання унікальне для КОЖНОГО клієнта (TelegramJoin.gs):
+//      коли клієнт за ним переходить, у таблицю сам потрапляє
+//      його нікнейм у Telegram — тобто нік звʼязується з номером.
+//      Без бота працює запасний варіант: посилання по областях.
 //
 // НОВІ КОЛОНКИ (додаються в КІНЕЦЬ, наявні дані не зсуваються)
-//   головна таблиця → T, U, V, W  (20–23)
-//   файл менеджера  → S, T, U, V  (19–22)
+//   головна таблиця → T–Y  (20–25)
+//   файл менеджера  → S–X  (19–24)
+//   кнопка · статус · дата надсилання · видане посилання ·
+//   нікнейм клієнта · дата приєднання
 //
-// ВСТАНОВЛЕННЯ — apps-script/README.md (5 кроків, ~10 хвилин)
+// Персональне посилання на кожного клієнта і автоматичний запис
+// нікнейму — у файлі TelegramJoin.gs.
+//
+// ВСТАНОВЛЕННЯ — apps-script/README.md
 // ============================================================
 
 
 // ── Колонки ───────────────────────────────────────────────
-var TG_MAIN_BTN = 20, TG_MAIN_STATUS = 21, TG_MAIN_DATE = 22, TG_MAIN_LINK = 23;
-var TG_MGR_BTN  = 19, TG_MGR_STATUS  = 20, TG_MGR_DATE  = 21, TG_MGR_LINK  = 22;
+var TG_MAIN_BTN = 20, TG_MAIN_STATUS = 21, TG_MAIN_DATE = 22, TG_MAIN_LINK = 23,
+    TG_MAIN_NICK = 24, TG_MAIN_JOINED = 25;
+var TG_MGR_BTN  = 19, TG_MGR_STATUS  = 20, TG_MGR_DATE  = 21, TG_MGR_LINK  = 22,
+    TG_MGR_NICK  = 23, TG_MGR_JOINED  = 24;
+
+// Скільки колонок блоку TG пишеться одним записом: статус → дата приєднання
+var TG_BLOCK = 5;
 
 var TG_HDR_BTN    = "📨 Надіслати TG";
 var TG_HDR_STATUS = "Статус TG-посилання";
 var TG_HDR_DATE   = "Дата надсилання TG";
 var TG_HDR_LINK   = "Видане TG-посилання";
+var TG_HDR_NICK   = "TG нікнейм клієнта";
+var TG_HDR_JOINED = "Дата приєднання";
 
 var TG_BTN_LABEL      = "📨 Надіслати";
 var TG_BTN_LABEL_SENT = "🔁 Посилання";
 
-var TG_STATUS_SENT = "✅ Надіслано";
-var TG_STATUS_LIST = [TG_STATUS_SENT, "👤 Приєднався", "🚫 Не потрібно", "❌ Відмовився"];
+var TG_STATUS_SENT   = "✅ Надіслано";
+var TG_STATUS_JOINED = "👤 Приєднався";
+var TG_STATUS_LIST   = [TG_STATUS_SENT, TG_STATUS_JOINED, "🚫 Не потрібно", "❌ Відмовився"];
 
 // ── Аркуші ────────────────────────────────────────────────
 var TG_LINKS_SHEET = "🔗 TG-посилання";
@@ -91,8 +107,8 @@ function installTgColumns() {
   try {
     var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
     if (!main) throw new Error("аркуш «" + MAIN_SHEET + "» не знайдено");
-    tgSetupSheet_(main, {btn: TG_MAIN_BTN, status: TG_MAIN_STATUS, date: TG_MAIN_DATE, link: TG_MAIN_LINK});
-    report.push("✅ Головна «" + MAIN_SHEET + "»: колонки T, U, V, W додано");
+    tgSetupSheet_(main, tgMainCols_());
+    report.push("✅ Головна «" + MAIN_SHEET + "»: колонки T–Y додано");
   } catch (err) { report.push("❌ Головна: " + err); }
 
   var managers = getManagers();
@@ -101,8 +117,8 @@ function installTgColumns() {
     if (!fileId) { report.push("ℹ️ " + name + ": немає файлу — пропущено"); continue; }
     try {
       var sh = SpreadsheetApp.openById(fileId).getSheets()[0];
-      tgSetupSheet_(sh, {btn: TG_MGR_BTN, status: TG_MGR_STATUS, date: TG_MGR_DATE, link: TG_MGR_LINK});
-      report.push("✅ " + name + ": колонки S, T, U, V додано");
+      tgSetupSheet_(sh, tgMgrCols_());
+      report.push("✅ " + name + ": колонки S–X додано");
     } catch (err) { report.push("❌ " + name + ": " + err); }
   }
 
@@ -117,19 +133,29 @@ function installTgColumns() {
   return report.join("\n");
 }
 
-// Додає 4 колонки в кінець конкретного аркуша (ідемпотентно)
+// Набори колонок головної таблиці та файлу менеджера
+function tgMainCols_() {
+  return {btn: TG_MAIN_BTN, status: TG_MAIN_STATUS, date: TG_MAIN_DATE,
+          link: TG_MAIN_LINK, nick: TG_MAIN_NICK, joined: TG_MAIN_JOINED};
+}
+function tgMgrCols_() {
+  return {btn: TG_MGR_BTN, status: TG_MGR_STATUS, date: TG_MGR_DATE,
+          link: TG_MGR_LINK, nick: TG_MGR_NICK, joined: TG_MGR_JOINED};
+}
+
+// Додає 6 колонок у кінець конкретного аркуша (ідемпотентно)
 function tgSetupSheet_(sheet, cols) {
   var hdrRow = tgHeaderRow_(sheet);
 
-  if (sheet.getMaxColumns() < cols.link) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), cols.link - sheet.getMaxColumns());
+  if (sheet.getMaxColumns() < cols.joined) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), cols.joined - sheet.getMaxColumns());
   }
 
   // Заголовки — у стилі сусідньої колонки
   var sample = sheet.getRange(hdrRow, Math.max(1, cols.btn - 1));
   var bg = sample.getBackground(), fc = sample.getFontColor();
-  sheet.getRange(hdrRow, cols.btn, 1, 4)
-       .setValues([[TG_HDR_BTN, TG_HDR_STATUS, TG_HDR_DATE, TG_HDR_LINK]])
+  sheet.getRange(hdrRow, cols.btn, 1, 6)
+       .setValues([[TG_HDR_BTN, TG_HDR_STATUS, TG_HDR_DATE, TG_HDR_LINK, TG_HDR_NICK, TG_HDR_JOINED]])
        .setFontWeight("bold").setBackground(bg).setFontColor(fc)
        .setWrap(true).setVerticalAlignment("middle");
 
@@ -138,17 +164,20 @@ function tgSetupSheet_(sheet, cols) {
     sheet.getRange(hdrRow + 1, cols.btn,    nRows, 1).setHorizontalAlignment("center");
     sheet.getRange(hdrRow + 1, cols.status, nRows, 1).setDataValidation(tgStatusRule_());
     sheet.getRange(hdrRow + 1, cols.link,   nRows, 1).setFontSize(9).setWrap(false);
+    sheet.getRange(hdrRow + 1, cols.nick,   nRows, 1).setFontWeight("bold");
   }
   sheet.setColumnWidth(cols.btn,    120);
   sheet.setColumnWidth(cols.status, 160);
   sheet.setColumnWidth(cols.date,   140);
   sheet.setColumnWidth(cols.link,   230);
+  sheet.setColumnWidth(cols.nick,   170);
+  sheet.setColumnWidth(cols.joined, 140);
 
   tgConditionalFormat_(sheet, cols, hdrRow);
 
   // Якщо зверху є обʼєднана «шапка» — розтягуємо на нові колонки
   if (typeof extendTitleMerges_ === "function") {
-    try { extendTitleMerges_(sheet, cols.link, hdrRow); } catch (err) { Logger.log("tgSetupSheet_ merge: " + err); }
+    try { extendTitleMerges_(sheet, cols.joined, hdrRow); } catch (err) { Logger.log("tgSetupSheet_ merge: " + err); }
   }
 }
 
@@ -234,7 +263,7 @@ function tgRefreshAll_(force) {
   var changed = tgFillButtons_(main, DATA_START, ids, TG_MAIN_BTN, TG_MAIN_STATUS, force);
 
   // Мапа ID → статус у головній (для звірки з менеджерами)
-  var tg = main.getRange(DATA_START, TG_MAIN_STATUS, n, 3).getValues();
+  var tg = main.getRange(DATA_START, TG_MAIN_STATUS, n, TG_BLOCK).getValues();
   var byId = {};
   for (var i = 0; i < n; i++) {
     var id = ids[i][0] ? ids[i][0].toString().trim() : "";
@@ -242,10 +271,9 @@ function tgRefreshAll_(force) {
     byId[id] = {
       i: i, row: DATA_START + i,
       manager: mgrCol[i][0] ? mgrCol[i][0].toString().trim() : "",
-      status:  tg[i][0] ? tg[i][0].toString().trim() : "",
-      date:    tg[i][1] ? tg[i][1].toString().trim() : "",
-      link:    tg[i][2] ? tg[i][2].toString().trim() : ""
+      vals:    tg[i].map(function (v) { return v === null || v === undefined ? "" : v.toString().trim(); })
     };
+    byId[id].status = byId[id].vals[0];
   }
 
   var managers = getManagers(), up = 0, down = 0;
@@ -262,7 +290,7 @@ function tgRefreshAll_(force) {
       var mIds  = sh.getRange(TG_MGR_DATA_START, 1, mn, 1).getValues();
       changed  += tgFillButtons_(sh, TG_MGR_DATA_START, mIds, TG_MGR_BTN, TG_MGR_STATUS, force);
 
-      var mTg = sh.getRange(TG_MGR_DATA_START, TG_MGR_STATUS, mn, 3).getValues();
+      var mTg = sh.getRange(TG_MGR_DATA_START, TG_MGR_STATUS, mn, TG_BLOCK).getValues();
       for (var j = 0; j < mn; j++) {
         var mid = mIds[j][0] ? mIds[j][0].toString().trim() : "";
         if (!mid) continue;
@@ -273,15 +301,16 @@ function tgRefreshAll_(force) {
 
         if (rMgr > rMain) {
           // менеджер просунув статус далі (напр. «👤 Приєднався») → піднімаємо в головну
-          rec.status = ms;
-          rec.date   = mTg[j][1] ? mTg[j][1].toString().trim() : rec.date;
-          rec.link   = mTg[j][2] ? mTg[j][2].toString().trim() : rec.link;
-          main.getRange(rec.row, TG_MAIN_STATUS, 1, 3).setValues([[rec.status, rec.date, rec.link]]);
+          for (var v = 0; v < TG_BLOCK; v++) {
+            var mv = mTg[j][v] === null || mTg[j][v] === undefined ? "" : mTg[j][v].toString().trim();
+            if (v === 0 || mv) rec.vals[v] = mv;   // порожнім не затираємо те, що вже є
+          }
+          rec.status = rec.vals[0];
+          main.getRange(rec.row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([rec.vals]);
           up++;
         } else if (rMain > rMgr) {
           // у менеджера статус «молодший» (найчастіше порожній) → опускаємо з головної
-          sh.getRange(TG_MGR_DATA_START + j, TG_MGR_STATUS, 1, 3)
-            .setValues([[rec.status, rec.date, rec.link]]);
+          sh.getRange(TG_MGR_DATA_START + j, TG_MGR_STATUS, 1, TG_BLOCK).setValues([rec.vals]);
           down++;
         }
         // однаковий «вік» статусу (напр. «🚫 Не потрібно» vs «❌ Відмовився») —
@@ -380,7 +409,7 @@ function markTgSent_(id, source) {
     var row = tgFindRow_(main, COL.ID, DATA_START, id);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено в таблиці."};
 
-    var d = main.getRange(row, 1, 1, TG_MAIN_LINK).getValues()[0];
+    var d = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
     var info = {
       ok: true, id: id, row: row,
       name:     tgStr_(d[COL.NAME - 1]),
@@ -395,11 +424,14 @@ function markTgSent_(id, source) {
     var prevDate   = tgStr_(d[TG_MAIN_DATE - 1]);
     var prevLink   = tgStr_(d[TG_MAIN_LINK - 1]);
     var repeat     = tgIsSent_(prevStatus);
+    info.nick      = tgStr_(d[TG_MAIN_NICK - 1]);     // якщо клієнт уже приєднався
+    info.joinedAt  = tgStr_(d[TG_MAIN_JOINED - 1]);
 
-    // Посилання: вже видане раніше → віддаємо те саме (щоб статистика в Telegram не «розʼїхалась»)
-    var res = prevLink ? {link: prevLink, row: 0, key: tgNormRegion_(info.region)} : tgResolveLink_(info);
+    // Посилання: вже видане раніше → віддаємо те саме (клієнт має на руках саме його)
+    var res = tgResolveLink_(info, prevLink);
     info.link      = res.link;
     info.linkRow   = res.row;
+    info.personal  = !!res.personal;
     info.noLink    = !res.link;
     info.repeat    = repeat;
     info.source    = source;
@@ -407,15 +439,16 @@ function markTgSent_(id, source) {
     var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
     info.sentAt = repeat && prevDate ? prevDate : stamp;
 
-    var vals = [[repeat ? prevStatus : TG_STATUS_SENT, info.sentAt, info.link || prevLink]];
-    main.getRange(row, TG_MAIN_STATUS, 1, 3).setValues(vals);
+    var vals = [repeat ? prevStatus : TG_STATUS_SENT, info.sentAt,
+                info.link || prevLink, info.nick, info.joinedAt];
+    main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
     try {
       main.getRange(row, TG_MAIN_STATUS).setNote(
         "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source + "\nОстаннє відкриття: " + stamp);
     } catch (err) { Logger.log("note: " + err); }
     SpreadsheetApp.flush();
 
-    tgSyncToManager_(info.manager, id, vals[0]);
+    tgSyncToManager_(info.manager, id, vals);
     tgLogAppend_([new Date(), id, info.name, info.phone, info.region, info.manager,
                   info.link, source, repeat ? "повторно" : "вперше"]);
     if (!repeat && res.row) tgBumpCounter_(res.row, stamp);
@@ -437,30 +470,33 @@ function tgUndo_(id) {
     var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
     var row  = tgFindRow_(main, COL.ID, DATA_START, id);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено."};
-    var d = main.getRange(row, 1, 1, TG_MAIN_LINK).getValues()[0];
+    var d = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
     var info = {ok: true, id: id, name: tgStr_(d[COL.NAME - 1]), manager: tgStr_(d[COL.MANAGER - 1])};
 
+    // Нік і дату приєднання не чіпаємо: клієнт справді в каналі
     main.getRange(row, TG_MAIN_STATUS, 1, 2).setValues([["", ""]]);
     try { main.getRange(row, TG_MAIN_STATUS).clearNote(); } catch (err) { Logger.log("clearNote: " + err); }
     SpreadsheetApp.flush();
-    tgSyncToManager_(info.manager, id, ["", "", tgStr_(d[TG_MAIN_LINK - 1])]);
+    tgSyncToManager_(info.manager, id, ["", "", tgStr_(d[TG_MAIN_LINK - 1]),
+                                        tgStr_(d[TG_MAIN_NICK - 1]), tgStr_(d[TG_MAIN_JOINED - 1])]);
     tgLogAppend_([new Date(), id, info.name, tgStr_(d[COL.PHONE - 1]), tgStr_(d[COL.REGION - 1]),
                   info.manager, "", "скасування", "скасовано"]);
     return info;
   } finally { lock.releaseLock(); }
 }
 
-// Пише статус у файл менеджера
+// Пише блок TG (статус, дата, посилання, нік, дата приєднання) у файл менеджера
 function tgSyncToManager_(managerName, id, vals) {
   try {
     if (!managerName) return;
     var m = getManagers()[managerName];
     if (!m || !m.fileId) return;
     var sh = SpreadsheetApp.openById(m.fileId).getSheets()[0];
-    if (sh.getMaxColumns() < TG_MGR_LINK) return;
+    if (sh.getMaxColumns() < TG_MGR_JOINED) return;
     var row = tgFindRow_(sh, 1, TG_MGR_DATA_START, id);
     if (row === -1) return;
-    sh.getRange(row, TG_MGR_STATUS, 1, 3).setValues([vals]);
+    while (vals.length < TG_BLOCK) vals.push("");
+    sh.getRange(row, TG_MGR_STATUS, 1, TG_BLOCK).setValues([vals.slice(0, TG_BLOCK)]);
   } catch (err) { Logger.log("tgSyncToManager_: " + err); }
 }
 
@@ -530,8 +566,10 @@ function tgLinksMap_() {
   return map;
 }
 
-// Головна функція вибору посилання для клієнта
-function tgResolveLink_(info) {
+// Головна функція вибору посилання для клієнта.
+// existing — посилання, яке цей клієнт уже отримав раніше: тоді нове
+// не видаємо (клієнт має на руках старе), лише визначаємо його тип.
+function tgResolveLink_(info, existing) {
   var map  = tgLinksMap_();
   var key  = tgNormRegion_(info.region);
   var rec  = key ? map[key] : null;
@@ -543,28 +581,35 @@ function tgResolveLink_(info) {
   }
   if (!rec || !rec.link) rec = map[tgNormRegion_("За замовчуванням")] || rec;
 
-  var out = {link: rec ? rec.link : "", row: rec ? rec.row : 0, key: key};
+  var regionLink = rec ? rec.link : "";
+  if (existing) {
+    return {link: existing, row: 0, key: key, personal: existing !== regionLink};
+  }
 
-  // Необовʼязково: персональне одноразове посилання через Telegram-бота
-  var personal = tgPersonalLink_(info, rec);
-  if (personal) out.link = personal;
-  return out;
+  var personal = tgPersonalLink_(info, rec);   // персональне для цього клієнта
+  return personal ? {link: personal, row: rec ? rec.row : 0, key: key, personal: true}
+                  : {link: regionLink, row: rec ? rec.row : 0, key: key, personal: false};
 }
 
-// Персональне посилання (вмикається лише якщо задані Script Properties
-// TG_BOT_TOKEN і TG_LINK_MODE = "personal" або "request").
-// Назва посилання = ID + ПІБ → у Telegram видно, ХТО саме приєднався.
+// ПЕРСОНАЛЬНЕ посилання — окреме для кожного клієнта.
+// Вмикається автоматично, щойно задано Script Property TG_BOT_TOKEN
+// (вимкнути: TG_LINK_MODE = "off" → працюють посилання по областях).
+// Назва посилання = ID ліда + ПІБ. Саме вона привʼязує нікнейм у Telegram
+// до рядка в таблиці, а отже — до номера телефону клієнта.
+//   TG_LINK_MODE = "request"  (за замовчуванням) — заявка на вступ:
+//        посилання багаторазове, бот бачить, ХТО подав заявку, і сам її схвалює.
+//   TG_LINK_MODE = "personal" — одноразове посилання (member_limit: 1).
 function tgPersonalLink_(info, rec) {
   try {
     var props = PropertiesService.getScriptProperties();
-    var mode  = (props.getProperty("TG_LINK_MODE") || "").trim();
-    if (mode !== "personal" && mode !== "request") return "";
     var token = (props.getProperty("TG_BOT_TOKEN") || "").trim();
     if (!token) return "";
+    var mode = (props.getProperty("TG_LINK_MODE") || "request").trim().toLowerCase();
+    if (mode === "off" || mode === "ні") return "";
     var chatId = (rec && rec.chatId) || (props.getProperty("TG_CHAT_ID") || "").trim();
-    if (!chatId) return "";
+    if (!chatId) { Logger.log("tgPersonalLink_: не задано TG_CHAT_ID / Chat ID області"); return ""; }
 
-    var payload = {chat_id: chatId, name: (info.id + " " + info.name).substring(0, 32)};
+    var payload = {chat_id: chatId, name: tgLinkName_(info)};
     if (mode === "personal") payload.member_limit = 1;
     else payload.creates_join_request = true;
 
@@ -574,9 +619,25 @@ function tgPersonalLink_(info, rec) {
     });
     var j = JSON.parse(res.getContentText());
     if (j && j.ok && j.result && j.result.invite_link) return j.result.invite_link;
-    Logger.log("tgPersonalLink_: " + res.getContentText().substring(0, 200));
+    Logger.log("tgPersonalLink_: " + res.getContentText().substring(0, 300));
   } catch (err) { Logger.log("tgPersonalLink_: " + err); }
   return "";
+}
+
+// Назва запрошення в Telegram: «LTEX-20260909-1234 Іванова С» (ліміт 32 символи).
+// Починається з ID ліда — по ньому подія вступу знаходить рядок, а в ньому телефон.
+function tgLinkName_(info) {
+  var id = tgStr_(info && info.id);
+  var nm = tgStr_(info && info.name);
+  return (nm ? (id + " " + nm) : id).substring(0, 32);
+}
+
+// Зворотне перетворення: «LTEX-20260909-1234 Іванова С» → «LTEX-20260909-1234»
+function tgLeadIdFromLinkName_(name) {
+  var n = tgStr_(name);
+  if (!n) return "";
+  var first = n.split(/\s+/)[0];
+  return /^LTEX-/i.test(first) ? first : "";
 }
 
 function tgBumpCounter_(row, stamp) {
@@ -738,7 +799,7 @@ function getTgStatsBlock_() {
     var tz   = Session.getScriptTimeZone();
     var yDay = Utilities.formatDate(new Date(Date.now() - 86400000), tz, "dd.MM.yyyy");
     var n    = lastRow - DATA_START + 1;
-    var data = main.getRange(DATA_START, 1, n, TG_MAIN_LINK).getValues();
+    var data = main.getRange(DATA_START, 1, n, TG_MAIN_JOINED).getValues();
 
     var total = 0, sent = 0, joined = 0, yest = 0;
     var byMgr = {};
@@ -801,6 +862,10 @@ function tgLandingBody_(r) {
   h.push('<div class="badge ' + (r.repeat ? 'badge-rep' : 'badge-ok') + '">' +
          (r.repeat ? '🔁 Уже надсилали ' + tgEsc_(r.sentAt) : '✅ Статус «Надіслано» проставлено автоматично') +
          '</div>');
+  if (r.nick) {
+    h.push('<div class="badge badge-join">👤 Клієнт уже в каналі: ' + tgEsc_(r.nick) +
+           (r.joinedAt ? ' · ' + tgEsc_(r.joinedAt) : '') + '</div>');
+  }
 
   h.push('<div class="card"><div class="card-t">Клієнт</div>');
   h.push(tgRow_("ПІБ", r.name));
@@ -816,9 +881,15 @@ function tgLandingBody_(r) {
            '<p>Додайте унікальне посилання для області «' + tgEsc_(r.region || "—") +
            '» в аркуш «' + tgEsc_(TG_LINKS_SHEET) + '» головної таблиці.</p></div>');
   } else {
-    h.push('<div class="card"><div class="card-t">Унікальне посилання для області «' +
-           tgEsc_(r.region || "за замовчуванням") + '»</div>');
+    h.push('<div class="card"><div class="card-t">' +
+           (r.personal ? 'Персональне посилання цього клієнта'
+                       : 'Унікальне посилання для області «' + tgEsc_(r.region || "за замовчуванням") + '»') +
+           '</div>');
     h.push('<div class="link" id="lnk">' + tgEsc_(r.link) + '</div>');
+    if (r.personal && !r.nick) {
+      h.push('<p class="note">Щойно клієнт перейде за ним — його нікнейм у Telegram ' +
+             'сам зʼявиться в таблиці.</p>');
+    }
     h.push('<button class="btn btn-p" onclick="cp(' + tgJs_(r.link) + ',this)">📋 Скопіювати посилання</button>');
     h.push('</div>');
 
@@ -888,6 +959,7 @@ function tgHtmlShell_(body) {
     '.badge-ok{background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.35)}' +
     '.badge-rep{background:rgba(245,158,11,.13);color:#f59e0b;border:1px solid rgba(245,158,11,.32)}' +
     '.badge-err{background:rgba(239,68,68,.13);color:#ef4444;border:1px solid rgba(239,68,68,.32)}' +
+    '.badge-join{background:rgba(34,158,217,.15);color:#60c5f1;border:1px solid rgba(34,158,217,.35)}' +
     '.card{background:#162030;border:1px solid #243346;border-radius:14px;padding:16px}' +
     '.card.warn{border-color:rgba(245,158,11,.4)}' +
     '.card-t{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#6b8aaa;' +
@@ -905,6 +977,7 @@ function tgHtmlShell_(body) {
     '.btn-v{background:#7c3aed}.btn-t{background:#229ED9}.btn-w{background:#25D366}' +
     '.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}' +
     '.hint{font-size:12px;color:#6b8aaa;text-align:center;padding:0 8px}' +
+    '.note{font-size:12px;color:#6b8aaa;margin:-2px 0 10px}' +
     '.hint a{color:#60a5fa}' +
     '.ok{background:#10b981 !important}' +
     '</style></head><body><div class="wrap">' +
