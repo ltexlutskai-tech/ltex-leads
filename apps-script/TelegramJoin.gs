@@ -49,6 +49,22 @@ function tgApi_(method, payload) {
   }
 }
 
+// Типові відповіді Telegram — людською мовою
+function tgExplainTgError_(desc) {
+  var d = (desc || "").toString().toLowerCase();
+  if (d.indexOf("chat not found") >= 0)
+    return "бот НЕ доданий у канал як адміністратор, або невірний TG_CHAT_ID " +
+           "(має бути число з мінусом, напр. -1001234567890)";
+  if (d.indexOf("not enough rights") >= 0 || d.indexOf("chat_admin_required") >= 0 ||
+      d.indexOf("need administrator rights") >= 0)
+    return "боту бракує права «Запрошувати користувачів через посилання» в каналі";
+  if (d.indexOf("unauthorized") >= 0)
+    return "невірний TG_BOT_TOKEN — перевірте його в @BotFather";
+  if (d.indexOf("bot was kicked") >= 0 || d.indexOf("bot is not a member") >= 0)
+    return "бота видалили з каналу — додайте його адміністратором знову";
+  return desc || "невідома помилка";
+}
+
 // Секрет у query-рядку вебхука: заголовки в doGet/doPost недоступні,
 // тому підпис передаємо параметром ?tghook=…
 function tgHookSecret_() {
@@ -333,7 +349,8 @@ function testTelegramBot() {
   }
 
   var me = tgApi_("getMe", {});
-  out.push(me.ok ? "✅ Бот: @" + me.result.username : "❌ Бот: " + (me.description || ""));
+  out.push(me.ok ? "✅ Бот: @" + me.result.username : "❌ Бот: " + tgExplainTgError_(me.description));
+  if (!me.ok) { Logger.log(out.join("\n")); return out.join("\n"); }
 
   var wh = tgApi_("getWebhookInfo", {});
   if (wh.ok) {
@@ -360,7 +377,10 @@ function testTelegramBot() {
   }
   for (var id in chats) {
     var chat = tgApi_("getChat", {chat_id: id});
-    if (!chat.ok) { out.push("❌ Канал " + id + " (" + chats[id] + "): " + (chat.description || "")); continue; }
+    if (!chat.ok) {
+      out.push("❌ Канал " + id + " (" + chats[id] + "): " + tgExplainTgError_(chat.description));
+      continue;
+    }
     var mem = tgApi_("getChatMember", {chat_id: id, user_id: me.ok ? me.result.id : 0});
     var isAdmin = mem.ok && (mem.result.status === "administrator" || mem.result.status === "creator");
     var canInvite = isAdmin && mem.result.can_invite_users !== false;
@@ -389,14 +409,22 @@ function testTgPersonalLink() {
   var info = {id: tgStr_(d[COL.ID - 1]), name: tgStr_(d[COL.NAME - 1]), region: tgStr_(d[COL.REGION - 1])};
   if (!info.id) { Logger.log("У першому рядку немає ID"); return; }
 
-  var rec  = tgLinksMap_()[tgNormRegion_(info.region)] || {};
-  var link = tgPersonalLink_(info, rec);
-  if (!link) { Logger.log("❌ Персональне посилання не створено — див. testTelegramBot()"); return; }
+  var rec    = tgLinksMap_()[tgNormRegion_(info.region)] || {};
+  var chatId = rec.chatId || PropertiesService.getScriptProperties().getProperty("TG_CHAT_ID");
+  var link   = tgPersonalLink_(info, rec);
+  if (!link) {
+    // Питаємо Telegram напряму, щоб назвати причину, а не відсилати кудись
+    var why = tgApi_("createChatInviteLink", {chat_id: chatId, name: tgLinkName_(info),
+                                              creates_join_request: true});
+    Logger.log("❌ Персональне посилання не створено.\n   Причина: " +
+               tgExplainTgError_(why.description) +
+               "\n   TG_CHAT_ID = " + (chatId || "(не задано)"));
+    return;
+  }
 
   Logger.log("✅ Створено: " + link + "\n   назва: " + tgLinkName_(info) +
              "\n   зворотний розбір назви → " + tgLeadIdFromLinkName_(tgLinkName_(info)) +
              " (очікували " + info.id + ")");
-  var chatId = rec.chatId || PropertiesService.getScriptProperties().getProperty("TG_CHAT_ID");
   var rv = tgApi_("revokeChatInviteLink", {chat_id: chatId, invite_link: link});
   Logger.log(rv.ok ? "🧹 Тестове посилання відкликано" : "⚠️ Не вдалось відкликати: " + (rv.description || ""));
 }

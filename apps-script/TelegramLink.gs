@@ -710,7 +710,8 @@ function tgPersonalLink_(info, rec) {
     });
     var j = JSON.parse(res.getContentText());
     if (j && j.ok && j.result && j.result.invite_link) return j.result.invite_link;
-    Logger.log("tgPersonalLink_: " + res.getContentText().substring(0, 300));
+    Logger.log("tgPersonalLink_: " + (typeof tgExplainTgError_ === "function"
+      ? tgExplainTgError_(j && j.description) : res.getContentText().substring(0, 300)));
   } catch (err) { Logger.log("tgPersonalLink_: " + err); }
   return "";
 }
