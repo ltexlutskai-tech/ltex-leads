@@ -1204,32 +1204,46 @@ function ensureTgStatusDictionary_() {
 // ╔══════════════════════════════════════════════════════════╗
 // ║  11. ПЕРЕВІРКА (запустити після встановлення)            ║
 // ╚══════════════════════════════════════════════════════════╝
+// Що реально відповідає за адресою, на яку ведуть кнопки?
+// Старий код віддає JSON {"status":"ok"}, новий — сторінку L-TEX.
+// Запит безпечний: ID неіснуючий, підпис навмисно невірний — у таблицю
+// нічого не пишеться.
+function tgCheckDeployed_(url) {
+  try {
+    var res  = UrlFetchApp.fetch(url + "?a=tg&id=__test__&t=__bad__",
+                                 {muteHttpExceptions: true, followRedirects: true});
+    var body = res.getContentText() || "";
+    if (body.indexOf('"status":"ok"') >= 0) {
+      return {ok: false, why: "за адресою кнопок ще СТАРИЙ код. Перевірте рядок " +
+                              "handleTgClick у doGet і зробіть Розгорнути → " +
+                              "Керувати розгортаннями → ✏️ → Нова версія"};
+    }
+    if (body.indexOf("Посилання застаріле") >= 0 || body.indexOf("L-TEX") >= 0) return {ok: true};
+    return {ok: false, why: "незрозуміла відповідь (код " + res.getResponseCode() + "): " +
+                            body.substring(0, 150).replace(/\s+/g, " ")};
+  } catch (err) {
+    return {ok: false, why: "не вдалось звернутись за адресою кнопок — " + err};
+  }
+}
+
 function testTgSetup() {
   var out = [];
   var url = getTgTrackUrl_();
   out.push("URL веб-застосунку: " + url);
 
-  // Часта пастка: WEBHOOK_URL у Code.gs прописаний руками і може вказувати
-  // на старий деплой — тоді кнопки відкривають код, якого вже немає.
-  try {
-    var live = ScriptApp.getService().getUrl() || "";
-    var idOf = function (u) { var m = /\/macros\/s\/([^\/]+)\//.exec(u || ""); return m ? m[1] : ""; };
-    if (live && idOf(live) && idOf(url) && idOf(live) !== idOf(url)) {
-      out.push("⚠️ УВАГА: кнопки ведуть на інший деплой, ніж поточний!");
-      out.push("   у кнопках: " + url);
-      out.push("   поточний:  " + live);
-      out.push("   Виправити: Script Property TG_TRACK_URL = поточний URL,");
-      out.push("   далі refreshTgButtonsForce()");
-    } else if (live) {
-      out.push("✅ URL кнопок збігається з поточним деплоєм");
-    }
-  } catch (err) { Logger.log("testTgSetup url: " + err); }
+  // Часта пастка: WEBHOOK_URL у Code.gs прописаний руками і може вести на
+  // старий деплой. Порівнювати з ScriptApp.getService().getUrl() не можна —
+  // у редакторі він віддає тестову адресу /dev з іншим ідентифікатором.
+  // Тому питаємо сам URL кнопок: який код там відповідає.
+  var dep = tgCheckDeployed_(url);
+  out.push(dep.ok ? "✅ За адресою кнопок відповідає новий код (деплой оновлено)"
+                  : "❌ Деплой: " + dep.why);
 
   var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
   if (!main || main.getMaxColumns() < TG_MAIN_LINK) {
     out.push("Колонки головної: ❌ не встановлені — запустіть installTgColumns()");
   } else {
-    var hdr = main.getRange(tgHeaderRow_(main), TG_MAIN_BTN, 1, 4).getValues()[0];
+    var hdr = main.getRange(tgHeaderRow_(main), TG_MAIN_BTN, 1, 6).getValues()[0];
     out.push("Колонки головної: " + (hdr[0] === TG_HDR_BTN ? "✅ " + hdr.join(" | ") : "❌ не встановлені"));
   }
 
@@ -1245,8 +1259,19 @@ function testTgSetup() {
 
   var map = tgLinksMap_(), withLink = 0, noLink = [];
   for (var k in map) { if (map[k].link) withLink++; else noLink.push(k); }
-  out.push("Посилань заповнено: " + withLink + " з " + Object.keys(map).length);
-  if (noLink.length) out.push("Без посилання: " + noLink.join(", "));
+  var hasBot = !!(PropertiesService.getScriptProperties().getProperty("TG_BOT_TOKEN") || "").trim();
+  var defRec = map[tgNormRegion_("За замовчуванням")];
+  if (hasBot) {
+    out.push("Посилання по областях: " + withLink + " з " + Object.keys(map).length +
+             " — необовʼязкові, бо бот видає персональні");
+    if (!defRec || !defRec.link) {
+      out.push("   ℹ️ Варто заповнити хоча б рядок «За замовчуванням» в аркуші «" +
+               TG_LINKS_SHEET + "» — підстрахує, якщо бот раптом не відповість");
+    }
+  } else {
+    out.push("Посилань заповнено: " + withLink + " з " + Object.keys(map).length);
+    if (noLink.length) out.push("Без посилання: " + noLink.join(", "));
+  }
 
   var trig = ScriptApp.getProjectTriggers().filter(function (t) {
     return t.getHandlerFunction() === "tgRefreshJob";
