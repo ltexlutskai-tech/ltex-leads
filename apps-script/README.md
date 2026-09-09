@@ -247,5 +247,10 @@ var correctHeaders=[..., HDR_NEW_STATUS, HDR_NEW_COMMENT,
 
 **Кнопка відкриває `{"status":"ok"}`.** Не оновлено деплой — крок 7.
 
+**Кнопка веде на старий деплой.** Константа `WEBHOOK_URL` у `Code.gs` прописана
+руками й могла застаріти. `testTgSetup()` сам порівняє її з поточним URL і скаже,
+якщо вони різні: тоді додайте Script Property `TG_TRACK_URL` з правильним URL
+(Deploy → Manage deployments → Web app URL) і запустіть `refreshTgButtonsForce()`.
+
 **Кнопка каже «Посилання застаріле».** Змінився `TG_SECRET` або URL деплою —
 запустіть `refreshTgButtonsForce()`.

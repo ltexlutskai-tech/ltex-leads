@@ -1115,7 +1115,24 @@ function ensureTgStatusDictionary_() {
 // ╚══════════════════════════════════════════════════════════╝
 function testTgSetup() {
   var out = [];
-  out.push("URL веб-застосунку: " + getTgTrackUrl_());
+  var url = getTgTrackUrl_();
+  out.push("URL веб-застосунку: " + url);
+
+  // Часта пастка: WEBHOOK_URL у Code.gs прописаний руками і може вказувати
+  // на старий деплой — тоді кнопки відкривають код, якого вже немає.
+  try {
+    var live = ScriptApp.getService().getUrl() || "";
+    var idOf = function (u) { var m = /\/macros\/s\/([^\/]+)\//.exec(u || ""); return m ? m[1] : ""; };
+    if (live && idOf(live) && idOf(url) && idOf(live) !== idOf(url)) {
+      out.push("⚠️ УВАГА: кнопки ведуть на інший деплой, ніж поточний!");
+      out.push("   у кнопках: " + url);
+      out.push("   поточний:  " + live);
+      out.push("   Виправити: Script Property TG_TRACK_URL = поточний URL,");
+      out.push("   далі refreshTgButtonsForce()");
+    } else if (live) {
+      out.push("✅ URL кнопок збігається з поточним деплоєм");
+    }
+  } catch (err) { Logger.log("testTgSetup url: " + err); }
 
   var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
   if (!main || main.getMaxColumns() < TG_MAIN_LINK) {
