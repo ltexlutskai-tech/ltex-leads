@@ -414,37 +414,57 @@ function tgRefreshAll_(force) {
   return changed;
 }
 
-// Проставляє формулу-кнопку там, де її немає (або всюди, якщо force)
+// Проставляє кнопку там, де її немає (або всюди, якщо force).
+//
+// Кнопка — це НЕ формула, а текст із посиланням (rich text). Формула
+// =HYPERLINK(...) залежить від мови таблиці: в українській локалі
+// роздільник аргументів «;», а не «,», і формула з комами дає #ERROR!.
+// Текст із посиланням працює однаково в будь-якій локалі, не
+// перераховується і не ламається.
 function tgFillButtons_(sheet, startRow, ids, btnCol, statusCol, force) {
   var n = ids.length;
   if (!n || sheet.getMaxColumns() < btnCol) return 0;
-  var rng = sheet.getRange(startRow, btnCol, n, 1);
-  var cur = rng.getFormulas();
+  var rng   = sheet.getRange(startRow, btnCol, n, 1);
+  var cur   = rng.getRichTextValues();
+  var sts   = sheet.getRange(startRow, statusCol, n, 1).getValues();
+  var empty = SpreadsheetApp.newRichTextValue().setText("").build();
   var out = [], changed = 0;
 
   for (var i = 0; i < n; i++) {
-    var id = ids[i][0] ? ids[i][0].toString().trim() : "";
-    var f  = cur[i][0] || "";
+    var id  = ids[i][0] ? ids[i][0].toString().trim() : "";
+    var rt  = cur[i][0] || empty;
+    var url = rt.getLinkUrl ? rt.getLinkUrl() : null;
+    var txt = rt.getText ? rt.getText() : "";
+
     if (!id) {
-      if (f.indexOf("a=tg") >= 0) { out.push([""]); changed++; }   // рядок без ID — прибираємо кнопку
-      else out.push([f]);
+      // Рядок без ID: прибираємо лише нашу кнопку, чуже не чіпаємо
+      var ours = (url && url.indexOf("a=tg") >= 0) || txt === TG_BTN_LABEL || txt === TG_BTN_LABEL_SENT;
+      if (ours) { out.push([empty]); changed++; } else { out.push([rt]); }
       continue;
     }
-    if (force || f.indexOf("a=tg&id=" + id) === -1) {
-      out.push([tgButtonFormula_(id, "$" + tgColLetter_(statusCol) + (startRow + i))]);
+
+    var want = tgButtonUrl_(id);
+    var lbl  = tgIsSent_(sts[i][0]) ? TG_BTN_LABEL_SENT : TG_BTN_LABEL;
+    if (force || url !== want || txt !== lbl) {
+      out.push([SpreadsheetApp.newRichTextValue().setText(lbl).setLinkUrl(want).build()]);
       changed++;
     } else {
-      out.push([f]);
+      out.push([rt]);
     }
   }
-  if (changed) rng.setFormulas(out);
+
+  if (changed) {
+    // clearContent прибирає старі формули =HYPERLINK, які лишились від
+    // попередніх версій; далі пишемо всі клітинки діапазону разом
+    rng.clearContent();
+    rng.setRichTextValues(out);
+  }
   return changed;
 }
 
-// Формула кнопки. Напис міняється залежно від статусу в рядку.
-function tgButtonFormula_(id, statusRef) {
-  var url = getTgTrackUrl_() + "?a=tg&id=" + encodeURIComponent(id) + "&t=" + tgToken_(id);
-  return '=HYPERLINK("' + url + '",IF(' + statusRef + '="","' + TG_BTN_LABEL + '","' + TG_BTN_LABEL_SENT + '"))';
+// Адреса, на яку веде кнопка рядка
+function tgButtonUrl_(id) {
+  return getTgTrackUrl_() + "?a=tg&id=" + encodeURIComponent(id) + "&t=" + tgToken_(id);
 }
 
 function tgColLetter_(col) {
