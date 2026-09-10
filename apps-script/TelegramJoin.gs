@@ -362,7 +362,167 @@ function tgFindByNickInSheet_(main, query) {
 
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  5. ПЕРЕВІРКА НАЛАШТУВАНЬ БОТА                           ║
+// ║  5. СПИСОК УЧАСНИКІВ КАНАЛУ                              ║
+// ╚══════════════════════════════════════════════════════════╝
+// ВАЖЛИВО, ЧОГО ЗРОБИТИ НЕ МОЖНА
+//   Telegram навмисно не дає ботам перелічувати учасників каналу:
+//   у Bot API просто немає такого методу. Доступні лише
+//   getChatMemberCount (скільки всього) і getChatMember (про одну
+//   конкретну людину, якщо вже знаєш її id). Номер телефону бот
+//   не бачить ніколи — лише якщо людина сама надішле контакт у
+//   приватному чаті з ботом.
+//
+//   Тому список будується з НАШИХ даних: усі, хто перейшов за
+//   персональним посиланням, уже записані в таблицях разом з ніком.
+//   Телефон береться з картки клієнта — саме та звʼязка «нік ↔ номер»,
+//   заради якої все й робилось.
+//
+//   exportTgMembers() — вивантажити список у лист «👥 Учасники каналу»
+//   /учасники        — підсумок у Viber
+
+var TG_MEMBERS_SHEET = "👥 Учасники каналу";
+
+function exportTgMembers() {
+  var members = tgKnownMembers_();
+  var total   = tgChannelMemberCount_();
+
+  var ss = tgSS_(MAIN_FILE_ID);
+  var sh = ss.getSheetByName(TG_MEMBERS_SHEET);
+  if (!sh) sh = ss.insertSheet(TG_MEMBERS_SHEET);
+  sh.clear();
+
+  var head = ["Нік у Telegram", "ПІБ", "Телефон", "Область", "Менеджер",
+              "Дата приєднання", "Джерело", "ID"];
+  sh.getRange(1, 1, 1, head.length).setValues([head])
+    .setFontWeight("bold").setBackground("#2E6DA4").setFontColor("#FFFFFF");
+  sh.setFrozenRows(1);
+
+  if (members.length) {
+    var vals = members.map(function (m) {
+      return [m.nick, m.name, m.phone, m.region, m.manager, m.joined, m.src, m.id];
+    });
+    if (sh.getMaxRows() < vals.length + 1) sh.insertRowsAfter(sh.getMaxRows(), vals.length + 1 - sh.getMaxRows());
+    sh.getRange(2, 1, vals.length, head.length).setValues(vals);
+    sh.getRange(2, 3, vals.length, 1).setNumberFormat("@");
+  }
+  sh.setColumnWidth(1, 170); sh.setColumnWidth(2, 220); sh.setColumnWidth(3, 130);
+  sh.setColumnWidth(4, 150); sh.setColumnWidth(5, 170); sh.setColumnWidth(6, 140);
+
+  var msg = "👥 Учасники каналу\n" +
+            "Розпізнано (є в наших таблицях): " + members.length + "\n" +
+            (total ? "Усього підписників у каналі: " + total + "\n" +
+                     "Нерозпізнаних: " + Math.max(total - members.length, 0) +
+                     " — приєднались до запуску системи або не за нашим посиланням\n" : "") +
+            "Список: лист «" + TG_MEMBERS_SHEET + "» головної таблиці";
+  Logger.log(msg);
+  return msg;
+}
+
+// Усі, про кого ми знаємо, що вони в каналі: у рядку заповнений нік
+function tgKnownMembers_() {
+  var out = [];
+  var sources = [{sheet: tgMainSheetCached_(), src: "Ліди"}];
+  if (tg1CSheetName_()) {
+    var reg = tgSS_(MAIN_FILE_ID).getSheetByName(tg1CSheetName_());
+    if (reg) sources.push({sheet: reg, src: "База 1С"});
+  }
+
+  for (var s = 0; s < sources.length; s++) {
+    var sh = sources[s].sheet;
+    if (!sh || sh.getMaxColumns() < TG_MAIN_JOINED) continue;
+    var last = sh.getLastRow();
+    if (last < DATA_START) continue;
+    var data = sh.getRange(DATA_START, 1, last - DATA_START + 1, TG_MAIN_JOINED).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var nick = tgStr_(data[i][TG_MAIN_NICK - 1]);
+      if (!nick) continue;
+      out.push({
+        nick:    nick,
+        name:    tgStr_(data[i][COL.NAME - 1]),
+        phone:   tgStr_(data[i][COL.PHONE - 1]),
+        region:  tgStr_(data[i][COL.REGION - 1]),
+        manager: tgStr_(data[i][COL.MANAGER - 1]),
+        joined:  tgStr_(data[i][TG_MAIN_JOINED - 1]),
+        src:     sources[s].src,
+        id:      tgStr_(data[i][COL.ID - 1])
+      });
+    }
+  }
+
+  // Найновіші зверху
+  out.sort(function (a, b) {
+    var da = tgJoinTime_(a.joined), db = tgJoinTime_(b.joined);
+    return db - da;
+  });
+  return out;
+}
+
+function tgJoinTime_(s) {
+  var m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(tgStr_(s));
+  if (!m) return 0;
+  return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)).getTime();
+}
+
+// Скільки всього підписників — єдине, що Bot API дає про склад каналу
+function tgChannelMemberCount_() {
+  try {
+    var chatId = (typeof tgProp_ === "function")
+      ? tgProp_("TG_CHAT_ID")
+      : (PropertiesService.getScriptProperties().getProperty("TG_CHAT_ID") || "").trim();
+    if (!chatId) return 0;
+    var r = tgApi_("getChatMemberCount", {chat_id: chatId});
+    if (r && r.ok) return r.result;
+    r = tgApi_("getChatMembersCount", {chat_id: chatId});   // назва до Bot API 5.7
+    return (r && r.ok) ? r.result : 0;
+  } catch (err) { Logger.log("tgChannelMemberCount_: " + err); return 0; }
+}
+
+// Патч у Code.gs → doPost, поруч з іншими командами:
+//   if (tl.startsWith("/учасники")||tl.startsWith("/members")) { handleMembersCommand(text, sender); return okResponse(); }
+function handleMembersCommand(text, sender) {
+  try {
+    var members = tgKnownMembers_();
+    var total   = tgChannelMemberCount_();
+
+    var byMgr = {};
+    members.forEach(function (m) {
+      var k = m.manager || "Без менеджера";
+      byMgr[k] = (byMgr[k] || 0) + 1;
+    });
+
+    var txt = "👥 УЧАСНИКИ КАНАЛУ\n════════════════\n\n" +
+              "Розпізнано: " + members.length + "\n";
+    if (total) {
+      txt += "Усього підписників: " + total + "\n" +
+             "Нерозпізнаних: " + Math.max(total - members.length, 0) + "\n";
+    }
+    txt += "\nПо менеджерах:\n";
+    var list = [];
+    for (var k in byMgr) list.push({name: k, n: byMgr[k]});
+    list.sort(function (a, b) { return b.n - a.n; });
+    list.forEach(function (it) { txt += "  " + it.name + " — " + it.n + "\n"; });
+    sendViber(sender.id, txt);
+
+    var recent = members.slice(0, 10);
+    if (recent.length) {
+      var r = "🆕 Останні приєднання:\n\n";
+      recent.forEach(function (m) {
+        r += m.nick + "\n  " + (m.name || "—") + " · " + (m.phone || "без номера") +
+             (m.joined ? " · " + m.joined : "") + "\n";
+      });
+      r += "\nПовний список — лист «" + TG_MEMBERS_SHEET + "» у головній таблиці " +
+           "(оновити: exportTgMembers).";
+      sendViber(sender.id, r);
+    }
+  } catch (err) {
+    Logger.log("handleMembersCommand: " + err);
+    sendViber(sender.id, "Помилка: " + err);
+  }
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  6. ПЕРЕВІРКА НАЛАШТУВАНЬ БОТА                           ║
 // ╚══════════════════════════════════════════════════════════╝
 function testTelegramBot() {
   var out = [];
