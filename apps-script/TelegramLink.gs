@@ -1756,6 +1756,11 @@ function tgWhoMarked(dateText) {
 // Лог не видаляється — його перейменовують на «_tg_log_архів_дата»,
 // а поруч зʼявляється порожній. Звіт починає рахувати з нуля, але
 // історія лишається під рукою.
+// Редактор Apps Script запускає функції без аргументів, тож для самого
+// чищення є дві окремі — виберіть потрібну у списку функцій і ▶ Виконати.
+function tgResetNow()    { return tgResetProgress("почати"); }
+function tgResetNowAll() { return tgResetProgress("почати все"); }
+
 function tgResetProgress(confirm) {
   var word = tgStr_(confirm).toLowerCase();
   var run  = word.indexOf("почати") === 0;
@@ -1835,12 +1840,12 @@ function tgResetProgress(confirm) {
            " у " + sheets + " аркуш(ах)");
   if (left) {
     out.push("⏳ Не встигли " + left + " файл(ів) — запустіть " +
-             "tgResetProgress(\"" + word + "\") ще раз");
+             (full ? "tgResetNowAll()" : "tgResetNow()") + " ще раз");
   } else if (run) {
     out.push("✅ Готово. Кнопки на місці, менеджери починають з нуля.");
   } else {
-    out.push("Щоб справді прибрати — запустіть tgResetProgress(\"почати\")" +
-             (full ? "" : " або tgResetProgress(\"почати все\")"));
+    out.push("Щоб справді прибрати — виберіть у списку функцій tgResetNow() " +
+             "(або tgResetNowAll(), якщо разом із посиланнями й ніками) і ▶ Виконати");
   }
 
   Logger.log(out.join("\n"));
