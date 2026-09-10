@@ -678,21 +678,30 @@ function tg1CSyncJob() {
   } catch (err) { Logger.log("tg1CSyncJob: " + err); }
 }
 
-// Кнопки новим рядкам 1С у головній + звірка статусів з листами менеджерів
+// Кнопки новим рядкам 1С у головній і в менеджерів.
+// Аркушів багато й вони великі, тому з бюджетом часу: що не встигли,
+// доробить наступний запуск (або щоденне tg1CSyncJob).
 function tg1CRefreshButtons() {
+  var t0 = Date.now();
+  var n = 0, left = 0;
+
   var reg = tgSS_(MAIN_FILE_ID).getSheetByName(TG1C_SHEET);
-  if (!reg) return 0;
-  var n = tgButtonsForSheet_(reg, DATA_START, COL.ID, TG_MAIN_BTN, TG_MAIN_STATUS, false);
+  if (reg) n += tgButtonsForSheet_(reg, DATA_START, COL.ID, TG_MAIN_BTN, TG_MAIN_STATUS, false);
+
   var managers = tgManagers_();
   for (var name in managers) {
     var fileId = managers[name].fileId;
     if (!fileId) continue;
+    if (Date.now() - t0 > TG_TIME_BUDGET) { left++; continue; }
     try {
       var sh = tgSS_(fileId).getSheetByName(TG1C_SHEET);
       if (sh) n += tgButtonsForSheet_(sh, TG_MGR_DATA_START, 1, TG_MGR_BTN, TG_MGR_STATUS, false);
     } catch (err) { Logger.log("tg1CRefreshButtons (" + name + "): " + err); }
   }
-  Logger.log("tg1CRefreshButtons: кнопок " + n);
+
+  Logger.log("tg1CRefreshButtons: кнопок " + n +
+             (left ? "\n⏳ Не встигли " + left + " файл(ів) — запустіть tg1CRefreshButtons() ще раз"
+                   : "\n✅ Усі листи 1С оновлено"));
   return n;
 }
 
