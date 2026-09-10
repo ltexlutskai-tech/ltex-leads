@@ -139,9 +139,18 @@ var TG_REGIONS = [
 // Текст повідомлення клієнту. Можна перевизначити у Script Properties
 // ключем TG_MSG_TEMPLATE. Плейсхолдери: {name}, {manager}, {link}
 var TG_MSG_DEFAULT =
-  "Вітаю! 👋\n" +
-  "Це {manager}, компанія L-TEX.\n" +
-  "Надсилаю посилання на наш Telegram-канал — там каталог, новинки та ціни:\n" +
+  "Вітаю! Це {manager}, компанія L-TEX 👋\n\n" +
+  "👕 L-TEX — оптовий постачальник секонд-хенду та стоку з Європи\n\n" +
+  "У нашому Telegram-каналі щодня:\n" +
+  "📦 Нові надходження та огляди новинок\n" +
+  "💰 Актуальні ціни на секонд-хенд і сток\n" +
+  "🔥 Акції та спеціальні пропозиції\n" +
+  "🚚 Графік доставок нашим транспортом\n" +
+  "📸 Живі фото та відео з мішків\n\n" +
+  "🚛 Доставка по всій Україні\n" +
+  "⚖️ Мінімальне замовлення — від 10 кг\n" +
+  "👨‍💼 Підтримка менеджера в Telegram\n\n" +
+  "📲 Приєднуйтесь — і дізнавайтесь про все першими:\n" +
   "{link}\n\n" +
   "Якщо щось буде незрозуміло — пишіть, підкажу. 🙌";
 
@@ -1200,7 +1209,7 @@ function tgLandingBody_(r) {
     h.push('</div>');
 
     h.push('<div class="card"><div class="card-t">Готове повідомлення клієнту</div>');
-    h.push('<textarea id="msg" rows="9">' + tgEsc_(msg) + '</textarea>');
+    h.push('<textarea id="msg" rows="16">' + tgEsc_(msg) + '</textarea>');
     h.push('<button class="btn btn-p" onclick="cp(document.getElementById(\'msg\').value,this)">' +
            '📋 Скопіювати повідомлення</button>');
     h.push('</div>');
