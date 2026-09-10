@@ -153,7 +153,7 @@ function jsonp(q) {
 }
 
 function api(params) {
-  var q = "?a=tgjson&id=" + encodeURIComponent(Q.id || "") + "&t=" + encodeURIComponent(Q.t || "");
+  var q = "?a=tg&fmt=json&id=" + encodeURIComponent(Q.id || "") + "&t=" + encodeURIComponent(Q.t || "");
   if (Q.r) q += "&r=" + encodeURIComponent(Q.r);
   for (var k in params) q += "&" + k + "=" + encodeURIComponent(params[k]);
   if (useJsonp) return jsonp(q);

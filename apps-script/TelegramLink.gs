@@ -577,11 +577,15 @@ function handleTgClick(e) {
   try {
     var p  = (e && e.parameter) || {};
 
+    // doGet у Code.gs пропускає сюди лише a=tg, тому і пінг, і дані для
+    // статичної сторінки їдуть тим самим a=tg — з окремим прапорцем.
+    // Старі назви (a=ping, a=tgjson) теж приймаємо.
+
     // Пінг для підігріву контейнера — відповідаємо ДО будь-яких таблиць
-    if (p.a === "ping") return ContentService.createTextOutput("pong");
+    if (p.ping === "1" || p.a === "ping") return ContentService.createTextOutput("pong");
 
     // Дані для статичної сторінки на GitHub Pages
-    if (p.a === "tgjson") return handleTgJson_(p);
+    if (p.fmt === "json" || p.a === "tgjson") return handleTgJson_(p);
 
     var id = (p.id || "").toString().trim();
     if (!id) return tgPage_(tgErrorBody_("Не передано ID клієнта.", ""));
@@ -1634,7 +1638,7 @@ function tgWarmJob() {
   try {
     var h = parseInt(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "H"), 10);
     if (h < TG_WARM_FROM || h > TG_WARM_TO) return;
-    UrlFetchApp.fetch(getTgTrackUrl_() + "?a=ping", {muteHttpExceptions: true});
+    UrlFetchApp.fetch(getTgTrackUrl_() + "?a=tg&ping=1", {muteHttpExceptions: true});
   } catch (err) { Logger.log("tgWarmJob: " + err); }
 }
 
@@ -1659,7 +1663,7 @@ function tgCheckPage_(page, execUrl) {
                               "файл send.html лежить у гілці, з якої публікується GitHub Pages"};
     }
     var html = res.getContentText() || "";
-    if (html.indexOf("a=tgjson") < 0) {
+    if (html.indexOf("fmt=json") < 0) {
       return {ok: false, why: "за цією адресою якась інша сторінка"};
     }
     var dep = /\/macros\/s\/([^/]+)\//.exec(execUrl || "");
@@ -1683,9 +1687,21 @@ function tgCheckDeployed_(url) {
                               "handleTgClick у doGet і зробіть Розгорнути → " +
                               "Керувати розгортаннями → ✏️ → Нова версія"};
     }
-    if (body.indexOf("Посилання застаріле") >= 0 || body.indexOf("L-TEX") >= 0) return {ok: true};
-    return {ok: false, why: "незрозуміла відповідь (код " + res.getResponseCode() + "): " +
-                            body.substring(0, 150).replace(/\s+/g, " ")};
+    if (body.indexOf("Посилання застаріле") < 0 && body.indexOf("L-TEX") < 0) {
+      return {ok: false, why: "незрозуміла відповідь (код " + res.getResponseCode() + "): " +
+                              body.substring(0, 150).replace(/\s+/g, " ")};
+    }
+
+    // Той самий шлях, яким ходить швидка сторінка. Ловить випадок, коли
+    // сторінка-кнопка вже нова, а даних вона не отримує.
+    var j = UrlFetchApp.fetch(url + "?a=tg&fmt=json&id=__test__&t=__bad__",
+                              {muteHttpExceptions: true, followRedirects: true}).getContentText() || "";
+    if (j.indexOf('"ok":') < 0) {
+      return {ok: false, why: "кнопка відкривається, але запит по дані (fmt=json) віддає не те: " +
+                              j.substring(0, 120).replace(/\s+/g, " ") +
+                              " — найчастіше деплой ще зі старим TelegramLink.gs"};
+    }
+    return {ok: true};
   } catch (err) {
     return {ok: false, why: "не вдалось звернутись за адресою кнопок — " + err};
   }
