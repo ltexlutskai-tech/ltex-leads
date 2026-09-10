@@ -123,11 +123,11 @@ var TG_REGIONS = [
 // Текст повідомлення клієнту. Можна перевизначити у Script Properties
 // ключем TG_MSG_TEMPLATE. Плейсхолдери: {name}, {manager}, {link}
 var TG_MSG_DEFAULT =
-  "Вітаю, {name}! 👋\n" +
+  "Вітаю! 👋\n" +
   "Це {manager}, компанія L-TEX.\n" +
   "Надсилаю посилання на наш Telegram-канал — там каталог, новинки та ціни:\n" +
   "{link}\n\n" +
-  "Напишіть, будь ласка, як приєднаєтесь — підкажу, з чого почати. 🙌";
+  "Якщо щось буде незрозуміло — пишіть, підкажу. 🙌";
 
 
 // ╔══════════════════════════════════════════════════════════╗
@@ -587,6 +587,7 @@ function markTgSent_(id, source) {
     var repeat     = tgIsSent_(prevStatus);
     info.nick      = tgStr_(d[TG_MAIN_NICK - 1]);     // якщо клієнт уже приєднався
     info.joinedAt  = tgStr_(d[TG_MAIN_JOINED - 1]);
+    info.comment   = tgStr_(d[COL.NEW_COMMENT - 1]);  // тут же позначки «немає в Viber»
 
     // Той самий клієнт може бути і лідом, і карткою 1С — тоді посилання
     // в них одне: беремо вже видане з будь-якого з двох рядків.
@@ -659,6 +660,63 @@ function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId) {
     Logger.log("tgFinishClick: " + err);
     return "error";
   }
+}
+
+// Менеджер натиснув «немає в Viber/Telegram/WhatsApp» — записуємо це
+// в колонку коментаря, щоб наступного разу було видно одразу.
+function tgMarkNoMessenger(id, token, app) {
+  try {
+    if (!id || token !== tgToken_(id)) return "bad-token";
+    var names = {viber: "Viber", telegram: "Telegram", whatsapp: "WhatsApp"};
+    var nm = names[tgStr_(app).toLowerCase()];
+    if (!nm) return "bad-app";
+
+    var sheet = tgSheetForId_(id);
+    var row   = tgFindRow_(sheet, COL.ID, DATA_START, id);
+    if (row === -1) return "not-found";
+
+    var cell = sheet.getRange(row, COL.NEW_COMMENT);
+    var cur  = tgStr_(cell.getValue());
+    var mark = "❗ немає в " + nm;
+    if (cur.indexOf(mark) >= 0) return nm;          // уже позначено
+    var next = cur ? cur + "; " + mark : mark;
+    cell.setValue(next);
+
+    // Те саме в таблиці менеджера
+    var manager = tgStr_(sheet.getRange(row, COL.MANAGER).getValue());
+    tgSyncCommentToManager_(manager, id, next);
+    return nm;
+  } catch (err) {
+    Logger.log("tgMarkNoMessenger: " + err);
+    return "error";
+  }
+}
+
+function tgSyncCommentToManager_(managerName, id, text) {
+  try {
+    if (!managerName) return;
+    var m = tgManagers_()[managerName];
+    if (!m || !m.fileId) return;
+    var sh = tgMgrSheetForId_(m.fileId, id);
+    if (!sh) return;
+    var col = (typeof MGR_COL_NEW_COMMENT === "number") ? MGR_COL_NEW_COMMENT : 18;
+    if (sh.getMaxColumns() < col) return;
+    var row = tgFindRow_(sh, 1, TG_MGR_DATA_START, id);
+    if (row !== -1) sh.getRange(row, col).setValue(text);
+  } catch (err) { Logger.log("tgSyncCommentToManager_: " + err); }
+}
+
+// «❗ немає в Viber; ❗ немає в Telegram» → ["Viber", "Telegram"]
+function tgNoAppsFrom_(comment) {
+  var out = [], s = tgStr_(comment);
+  if (!s) return out;
+  var re = /немає в (Viber|Telegram|WhatsApp)/gi, m;
+  while ((m = re.exec(s)) !== null) {
+    var nm = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    if (nm.toLowerCase() === "whatsapp") nm = "WhatsApp";
+    if (out.indexOf(nm) === -1) out.push(nm);
+  }
+  return out;
 }
 
 // Скасування помилкового натискання
@@ -1068,6 +1126,10 @@ function tgLandingBody_(r) {
     h.push('<div class="badge badge-join">👤 Клієнт уже в каналі: ' + tgEsc_(r.nick) +
            (r.joinedAt ? ' · ' + tgEsc_(r.joinedAt) : '') + '</div>');
   }
+  var absent = tgNoAppsFrom_(r.comment);
+  if (absent.length) {
+    h.push('<div class="badge badge-rep">❗ Номера немає в: ' + tgEsc_(absent.join(", ")) + '</div>');
+  }
 
   h.push('<div class="card"><div class="card-t">Клієнт</div>');
   h.push(tgRow_("ПІБ", r.name));
@@ -1101,38 +1163,53 @@ function tgLandingBody_(r) {
            '📋 Скопіювати повідомлення</button>');
     h.push('</div>');
 
-    // Текст їде разом із переходом — копіювати руками не треба.
-    // WhatsApp відкриває чат саме з цим номером і одразу з текстом.
-    // Viber і Telegram такого не вміють: вони або відкривають чат за
-    // номером, або несуть текст — тож даємо і те, і те.
+    // Кнопка відкриває ДІАЛОГ САМЕ З ЦИМ НОМЕРОМ. Текст підставити в
+    // чужий чат уміє лише WhatsApp; для Viber і Telegram кладемо текст
+    // у буфер у момент натискання — у чаті лишається «Вставити».
     var msgEnc  = encodeURIComponent(msg);
     var msgNoLn = encodeURIComponent(msg.split(r.link).join("").replace(/\n{3,}/g, "\n\n").trim());
 
-    h.push('<div class="card"><div class="card-t">Надіслати клієнту — з готовим текстом</div><div class="grid">');
-    h.push('<a class="btn btn-v" target="_blank" rel="noopener" href="viber://forward?text=' + msgEnc + '">Viber</a>');
-    h.push('<a class="btn btn-t" target="_blank" rel="noopener" href="https://t.me/share/url?url=' +
-           encodeURIComponent(r.link) + '&text=' + msgNoLn + '">Telegram</a>');
+    h.push('<div class="card"><div class="card-t">Написати клієнту</div>');
     if (intl) {
+      h.push('<div class="grid">');
+      h.push('<a class="btn btn-v" href="#" onclick="return go(' +
+             tgJs_("viber://chat?number=%2B" + intl) + ',' + tgJs_(msg) + ')">Viber</a>');
+      h.push('<a class="btn btn-t" href="#" onclick="return go(' +
+             tgJs_("tg://resolve?phone=" + intl) + ',' + tgJs_(msg) + ')">Telegram</a>');
       h.push('<a class="btn btn-w" target="_blank" rel="noopener" href="https://wa.me/' + intl +
              '?text=' + msgEnc + '">WhatsApp</a>');
+      h.push('<a class="btn btn-g" target="_blank" rel="noopener" href="' + tgEsc_(r.link) +
+             '">Відкрити канал</a>');
+      h.push('</div>');
+      h.push('<p class="note" id="gonote">Відкриється діалог саме з ' + tgEsc_(r.phone) +
+             '. Текст скопіюється сам — у чаті натисніть «Вставити». ' +
+             'WhatsApp підставить текст одразу.</p>');
+      h.push('<p class="note">Якщо месенджер напише, що такого номера немає — ' +
+             'клієнта там справді немає. Позначити: ' +
+             '<a href="#" onclick="return noApp(\'viber\')">немає в Viber</a> · ' +
+             '<a href="#" onclick="return noApp(\'telegram\')">у Telegram</a> · ' +
+             '<a href="#" onclick="return noApp(\'whatsapp\')">у WhatsApp</a></p>');
+      h.push('<p class="note" id="marknote"></p>');
+      h.push('<details><summary>Не відкривається діалог?</summary>' +
+             '<div class="grid" style="margin-top:8px">' +
+             '<a class="btn btn-g" target="_blank" rel="noopener" href="viber://forward?text=' + msgEnc +
+             '">Viber — через список чатів</a>' +
+             '<a class="btn btn-g" target="_blank" rel="noopener" href="https://t.me/share/url?url=' +
+             encodeURIComponent(r.link) + '&text=' + msgNoLn + '">Telegram — через список чатів</a>' +
+             '</div></details>');
+    } else {
+      h.push('<p class="note">У картці немає номера телефону — надішліть посилання вручну.</p>');
+      h.push('<a class="btn btn-g" target="_blank" rel="noopener" href="' + tgEsc_(r.link) +
+             '">Відкрити канал</a>');
     }
-    h.push('</div><p class="note">Viber і Telegram відкриють список чатів — виберіть клієнта, ' +
-           'текст уже буде в повідомленні.' +
-           (intl ? ' WhatsApp відкриє чат саме з ' + tgEsc_(r.phone) + '.' : '') + '</p></div>');
-
-    if (intl) {
-      h.push('<div class="card"><div class="card-t">Або просто відкрити чат клієнта</div><div class="grid">');
-      h.push('<a class="btn btn-g" target="_blank" rel="noopener" href="viber://chat?number=%2B' + intl +
-             '">Viber ' + tgEsc_(r.phone) + '</a>');
-      h.push('<a class="btn btn-g" target="_blank" rel="noopener" href="tg://resolve?phone=' + intl +
-             '">Telegram ' + tgEsc_(r.phone) + '</a>');
-      h.push('</div></div>');
-    }
+    h.push('</div>');
   }
 
   h.push('<p class="hint">Статус, дата і саме посилання вже записані в головну таблицю ' +
          'і в таблицю менеджера. Натиснули помилково? ' +
          '<a href="' + tgEsc_(undo) + '">Скасувати статус</a>.</p>');
+
+  h.push('<script>var TG_ID=' + tgJson_(r.id) + ',TG_TOKEN=' + tgJson_(tgToken_(r.id)) + ';</script>');
 
   // Дописуємо файл менеджера вже після показу сторінки
   if (r.deferred) {
@@ -1164,12 +1241,17 @@ function tgRow_(label, value) {
 
 function tgMessageText_(r) {
   var tpl = PropertiesService.getScriptProperties().getProperty("TG_MSG_TEMPLATE") || TG_MSG_DEFAULT;
-  var firstName = (r.name || "").toString().trim().split(/\s+/);
-  // «Іванова Світлана» → «Світлана» (у ПІБ ім'я зазвичай другим)
-  var nm = firstName.length > 1 ? firstName[1] : (firstName[0] || "");
-  return tpl.replace(/\{name\}/g, nm)
-            .replace(/\{manager\}/g, r.manager || "L-TEX")
+  return tpl.replace(/\{name\}/g, tgFirstName_(r.name))
+            .replace(/\{manager\}/g, tgFirstName_(r.manager) || "L-TEX")
             .replace(/\{link\}/g, r.link || "");
+}
+
+// «Кузенко Тарас» → «Тарас». У ПІБ імʼя зазвичай другим словом;
+// якщо слово одне — його й повертаємо.
+function tgFirstName_(full) {
+  var parts = tgStr_(full).split(/\s+/).filter(String);
+  if (!parts.length) return "";
+  return parts.length > 1 ? parts[1] : parts[0];
 }
 
 function tgHtmlShell_(body) {
@@ -1205,7 +1287,9 @@ function tgHtmlShell_(body) {
     '.btn-v{background:#7c3aed}.btn-t{background:#229ED9}.btn-w{background:#25D366}' +
     '.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}' +
     '.hint{font-size:12px;color:#6b8aaa;text-align:center;padding:0 8px}' +
-    '.note{font-size:12px;color:#6b8aaa;margin:-2px 0 10px}' +
+    '.note{font-size:12px;color:#6b8aaa;margin:8px 0 0}' +
+    '.note a{color:#60a5fa}' +
+    'details{margin-top:12px}summary{font-size:12px;color:#6b8aaa;cursor:pointer}' +
     '.hint a{color:#60a5fa}' +
     '.ok{background:#10b981 !important}' +
     '</style></head><body><div class="wrap">' +
@@ -1219,6 +1303,28 @@ function tgHtmlShell_(body) {
     'try{if(navigator.clipboard&&navigator.clipboard.writeText){' +
     'navigator.clipboard.writeText(t).then(ok,function(){fb(t,ok)})}else{fb(t,ok)}}catch(e){fb(t,ok)}}' +
     // Запасний шлях: у Google-івському iframe Clipboard API часто заблокований
+    // Клік по месенджеру: спершу текст у буфер, потім відкриваємо діалог
+    'function go(url,text){var n=document.getElementById("gonote");' +
+    'function open(okCopy){if(n)n.textContent=okCopy?"✅ Текст скопійовано — у чаті натисніть «Вставити»"' +
+    ':"⚠️ Текст не скопіювався — натисніть «Скопіювати повідомлення» вище";' +
+    'setTimeout(function(){window.location.href=url},120)}' +
+    'try{if(navigator.clipboard&&navigator.clipboard.writeText){' +
+    'navigator.clipboard.writeText(text).then(function(){open(true)},function(){open(fbq(text))})}' +
+    'else{open(fbq(text))}}catch(e){open(fbq(text))}return false}' +
+    // Тихе копіювання без сповіщень — повертає, чи вдалося
+    'function fbq(t){var a=document.createElement("textarea");a.value=t;a.style.position="fixed";' +
+    'a.style.top="0";a.style.opacity="0";document.body.appendChild(a);a.focus();a.select();' +
+    'var d=false;try{d=document.execCommand("copy")}catch(e){d=false}' +
+    'document.body.removeChild(a);return d}' +
+    // Позначка «номера немає в месенджері»
+    'function noApp(app){var n=document.getElementById("marknote");' +
+    'if(n)n.textContent="…записую";' +
+    'try{google.script.run.withSuccessHandler(function(res){' +
+    'if(n)n.textContent=(res&&res.length>2&&res!=="error"&&res!=="bad-app")' +
+    '?"❗ Позначено: немає в "+res+" — це збережено в таблиці"' +
+    ':"⚠️ Не вдалось записати"})' +
+    '.withFailureHandler(function(){if(n)n.textContent="⚠️ Не вдалось записати"})' +
+    '.tgMarkNoMessenger(TG_ID,TG_TOKEN,app)}catch(e){if(n)n.textContent="⚠️ Недоступно"}return false}' +
     'function fb(t,ok){var a=document.createElement("textarea");a.value=t;' +
     'a.style.position="fixed";a.style.top="0";a.style.opacity="0";document.body.appendChild(a);' +
     'a.focus();a.select();try{a.setSelectionRange(0,t.length)}catch(e){}' +
