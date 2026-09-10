@@ -552,8 +552,13 @@ function tgFillButtons_(sheet, startRow, ids, btnCol, statusCol, force) {
 // не перечитувати всю колонку ID; він перевіряється при відкритті, тож
 // зсув рядків нічого не ламає.
 function tgButtonUrl_(id, row) {
-  return getTgTrackUrl_() + "?a=tg&id=" + encodeURIComponent(id) + "&t=" + tgToken_(id) +
-         (row ? "&r=" + row : "");
+  var q = "id=" + encodeURIComponent(id) + "&t=" + tgToken_(id) + (row ? "&r=" + row : "");
+  // Якщо задано TG_PAGE_URL — кнопка веде на статичну сторінку (вона
+  // відкривається миттєво і сама забирає дані). Інакше — як раніше,
+  // сторінку малює Apps Script.
+  var page = tgProp_("TG_PAGE_URL");
+  return page ? (page + (page.indexOf("?") >= 0 ? "&" : "?") + q)
+              : (getTgTrackUrl_() + "?a=tg&" + q);
 }
 
 function tgColLetter_(col) {
@@ -571,6 +576,13 @@ function tgColLetter_(col) {
 function handleTgClick(e) {
   try {
     var p  = (e && e.parameter) || {};
+
+    // Пінг для підігріву контейнера — відповідаємо ДО будь-яких таблиць
+    if (p.a === "ping") return ContentService.createTextOutput("pong");
+
+    // Дані для статичної сторінки на GitHub Pages
+    if (p.a === "tgjson") return handleTgJson_(p);
+
     var id = (p.id || "").toString().trim();
     if (!id) return tgPage_(tgErrorBody_("Не передано ID клієнта.", ""));
 
@@ -592,6 +604,93 @@ function handleTgClick(e) {
   } catch (err) {
     Logger.log("handleTgClick: " + err);
     return tgPage_(tgErrorBody_("Помилка: " + err, ""));
+  }
+}
+
+
+// ── Дані для статичної сторінки ────────────────────────────
+// Сторінка на GitHub Pages відкривається миттєво (звичайний файл на
+// CDN, без холодного старту Apps Script) і вже потім забирає дані
+// звідси. Той самий підпис ?t=, той самий запис статусу.
+function handleTgJson_(p) {
+  var out;
+  try {
+    var id = tgStr_(p.id);
+    if (!id) {
+      out = {ok: false, error: "Не передано ID клієнта."};
+    } else if (tgStr_(p.t) !== tgToken_(id)) {
+      out = {ok: false, error: "Посилання застаріле або пошкоджене. Запустіть refreshTgButtonsForce()."};
+    } else if (p.fin === "1") {
+      out = {ok: true, fin: tgFinishFromPage_(id, p.r, p.lr, p.stamp)};
+    } else if (p.undo === "1") {
+      var u = tgUndo_(id);
+      out = u.ok ? {ok: true, undo: true, name: u.name, id: u.id} : {ok: false, error: u.error};
+    } else if (p.noapp) {
+      out = {ok: true, marked: tgMarkNoMessenger(id, p.t, p.noapp)};
+    } else {
+      var r = markTgSent_(id, "кнопка в таблиці", p.r);
+      out = r.ok ? tgJsonPayload_(r) : {ok: false, error: r.error};
+    }
+  } catch (err) {
+    Logger.log("handleTgJson_: " + err);
+    out = {ok: false, error: String(err)};
+  }
+  var body = JSON.stringify(out);
+
+  // JSONP — запасний шлях. Якщо браузер із якоїсь причини не пускає
+  // звичайний запит зі статичної сторінки, вона просить відповідь
+  // тегом <script>; так дані доходять завжди.
+  var cb = tgStr_(p.callback);
+  if (cb && /^[A-Za-z0-9_$]{1,40}$/.test(cb)) {
+    return ContentService.createTextOutput(cb + "(" + body + ");")
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(body)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function tgJsonPayload_(r) {
+  return {
+    ok: true, id: r.id, name: r.name, phone: r.phone, intl: tgIntlPhone_(r.phone),
+    region: r.region, city: r.city, manager: r.manager, interest: r.interest,
+    link: r.link, personal: !!r.personal, noLink: !!r.noLink,
+    repeat: !!r.repeat, sentAt: r.sentAt, nick: r.nick || "", joinedAt: r.joinedAt || "",
+    absent: tgNoAppsFrom_(r.comment), msg: tgMessageText_(r),
+    row: r.deferred ? r.deferred.row : 0,
+    linkRow: r.deferred ? r.deferred.linkRow : 0,
+    stamp: r.deferred ? r.deferred.stamp : ""
+  };
+}
+
+// Друга частина роботи — коли сторінка вже перед очима менеджера
+function tgFinishFromPage_(id, hintRow, linkRow, stamp) {
+  try {
+    var sheet = tgSheetForId_(id);
+    var row   = tgFindRow_(sheet, COL.ID, DATA_START, id, hintRow);
+    if (row === -1) return "not-found";
+
+    var d    = sheet.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+    var vals = [tgStr_(d[TG_MAIN_STATUS - 1]), tgStr_(d[TG_MAIN_DATE - 1]),
+                tgStr_(d[TG_MAIN_LINK - 1]),   tgStr_(d[TG_MAIN_NICK - 1]),
+                tgStr_(d[TG_MAIN_JOINED - 1])];
+    var manager = tgStr_(d[COL.MANAGER - 1]);
+
+    tgSyncToManager_(manager, id, vals);
+    try {
+      sheet.getRange(row, TG_MAIN_STATUS).setNote(
+        "Надіслав: " + (manager || "—") + "\nДжерело: кнопка в таблиці\nОстаннє відкриття: " +
+        (tgStr_(stamp) || vals[1]));
+    } catch (err) { Logger.log("note: " + err); }
+
+    var twin = tgTwinFromDups_(tgStr_(d[COL.DUPS - 1]));
+    if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, vals);
+
+    var lr = parseInt(linkRow, 10);
+    if (lr > 0) tgBumpCounter_(lr, tgStr_(stamp));
+    return "ok";
+  } catch (err) {
+    Logger.log("tgFinishFromPage_: " + err);
+    return "error";
   }
 }
 
@@ -1505,12 +1604,75 @@ function ensureTgStatusDictionary_() {
 
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  11. ПЕРЕВІРКА (запустити після встановлення)            ║
+// ║  11. ПІДІГРІВ КОНТЕЙНЕРА                                 ║
+// ╚══════════════════════════════════════════════════════════╝
+// Найдовше в кліку — холодний старт Apps Script: якщо застосунком
+// давно не користувались, контейнер треба підняти (1–2 с). Легкий
+// запит раз на 5 хвилин не дає йому заснути. Поза робочим часом не
+// гріємо, щоб не палити квоту.
+var TG_WARM_FROM = 7;   // з 7:00
+var TG_WARM_TO   = 21;  // до 21:00
+
+function setupTgWarmTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgWarmJob") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("tgWarmJob").timeBased().everyMinutes(5).create();
+  Logger.log("✅ Підігрів застосунку встановлено: кожні 5 хв, " +
+             TG_WARM_FROM + ":00–" + TG_WARM_TO + ":00");
+}
+
+function removeTgWarmTrigger() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgWarmJob") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  Logger.log("Видалено тригерів підігріву: " + n);
+}
+
+function tgWarmJob() {
+  try {
+    var h = parseInt(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "H"), 10);
+    if (h < TG_WARM_FROM || h > TG_WARM_TO) return;
+    UrlFetchApp.fetch(getTgTrackUrl_() + "?a=ping", {muteHttpExceptions: true});
+  } catch (err) { Logger.log("tgWarmJob: " + err); }
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  12. ПЕРЕВІРКА (запустити після встановлення)            ║
 // ╚══════════════════════════════════════════════════════════╝
 // Що реально відповідає за адресою, на яку ведуть кнопки?
 // Старий код віддає JSON {"status":"ok"}, новий — сторінку L-TEX.
 // Запит безпечний: ID неіснуючий, підпис навмисно невірний — у таблицю
 // нічого не пишеться.
+// Чи справді лежить за адресою TG_PAGE_URL наша сторінка і чи вона
+// звертається саме до цього веб-застосунку. Ловить три типові біди:
+// GitHub Pages не увімкнено, файл не потрапив у потрібну гілку,
+// у send.html прописано адресу старого розгортання.
+function tgCheckPage_(page, execUrl) {
+  try {
+    var res  = UrlFetchApp.fetch(page, {muteHttpExceptions: true, followRedirects: true});
+    var code = res.getResponseCode();
+    if (code !== 200) {
+      return {ok: false, why: "сторінка не відкривається (код " + code + "). Перевірте, що " +
+                              "файл send.html лежить у гілці, з якої публікується GitHub Pages"};
+    }
+    var html = res.getContentText() || "";
+    if (html.indexOf("a=tgjson") < 0) {
+      return {ok: false, why: "за цією адресою якась інша сторінка"};
+    }
+    var dep = /\/macros\/s\/([^/]+)\//.exec(execUrl || "");
+    if (dep && html.indexOf(dep[1]) < 0) {
+      return {ok: false, why: "у сторінці прописано інший веб-застосунок — виправте рядок " +
+                              "API на початку send.html"};
+    }
+    return {ok: true};
+  } catch (err) {
+    return {ok: false, why: "не вдалось відкрити сторінку — " + err};
+  }
+}
+
 function tgCheckDeployed_(url) {
   try {
     var res  = UrlFetchApp.fetch(url + "?a=tg&id=__test__&t=__bad__",
@@ -1580,6 +1742,21 @@ function testTgSetup() {
     return t.getHandlerFunction() === "tgRefreshJob";
   }).length;
   out.push("Тригер оновлення кнопок: " + (trig ? "✅ встановлено" : "❌ немає — запустіть setupTgTrigger()"));
+
+  var page = tgProp_("TG_PAGE_URL");
+  if (page) {
+    var chk = tgCheckPage_(page, url);
+    out.push(chk.ok ? "Кнопки ведуть на швидку сторінку: ✅ " + page
+                    : "Швидка сторінка (" + page + "): ❌ " + chk.why);
+  } else {
+    out.push("Кнопки ведуть на Apps Script (повільніше). Швидку сторінку вмикає " +
+             "властивість TG_PAGE_URL");
+  }
+
+  var warm = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === "tgWarmJob";
+  }).length;
+  out.push("Підігрів застосунку: " + (warm ? "✅ увімкнено" : "❌ немає — запустіть setupTgWarmTrigger()"));
 
   Logger.log(out.join("\n"));
   return out.join("\n");

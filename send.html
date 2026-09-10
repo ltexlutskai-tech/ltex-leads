@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0f1923">
+<meta name="robots" content="noindex,nofollow">
+<title>L-TEX | Посилання на Telegram</title>
+<!--
+  Сторінка кнопки «📨 Надіслати».
+
+  ЧОМУ ВОНА ТУТ, А НЕ В APPS SCRIPT
+  Apps Script малює сторінку сам, але спершу має підняти контейнер
+  (1–2 с) і відкрити важку таблицю. Менеджер увесь цей час дивиться
+  в білий екран. Цей файл — звичайна статика на CDN GitHub Pages:
+  відкривається миттєво, показує картку клієнта, а дані забирає
+  фоновим запитом. Очікування лишається, але воно вже видиме.
+
+  Якщо зміниться адреса веб-застосунку — правити тільки API нижче.
+-->
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{--bg:#0f1923;--surface:#162030;--surface2:#1c2a3a;--border:#243346;--border2:#2e4058;
+--text:#e8f0f8;--muted:#6b8aaa;--accent:#3b82f6;--accent2:#60a5fa;--green:#10b981;--gold:#f59e0b;--red:#ef4444}
+body{background:var(--bg);color:var(--text);line-height:1.5;padding:18px 14px 40px;
+font-family:'Outfit',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+background-image:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(59,130,246,.14) 0,transparent 60%)}
+.wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.hdr{display:flex;align-items:center;gap:12px}
+.logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#1d4ed8,#3b82f6);
+display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#fff;flex-shrink:0}
+.hdr h1{font-size:16px;font-weight:600}.hdr p{font-size:11px;color:var(--muted)}
+.badge{padding:12px 14px;border-radius:12px;font-weight:600;font-size:14px;text-align:center}
+.badge-ok{background:rgba(16,185,129,.15);color:var(--green);border:1px solid rgba(16,185,129,.35)}
+.badge-rep{background:rgba(245,158,11,.13);color:var(--gold);border:1px solid rgba(245,158,11,.32)}
+.badge-err{background:rgba(239,68,68,.13);color:var(--red);border:1px solid rgba(239,68,68,.32)}
+.badge-join{background:rgba(34,158,217,.15);color:#60c5f1;border:1px solid rgba(34,158,217,.35)}
+.badge-wait{background:var(--surface2);color:var(--muted);border:1px solid var(--border)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px}
+.card.warn{border-color:rgba(245,158,11,.4)}
+.card-t{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600;margin-bottom:10px}
+.r{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:14px;border-bottom:1px solid var(--surface2)}
+.r:last-child{border-bottom:0}.r span{color:var(--muted);flex-shrink:0}.r b{text-align:right;font-weight:500}
+.link{background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:12px;
+font-size:14px;word-break:break-all;color:var(--accent2);margin-bottom:10px;font-weight:500}
+textarea{width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:12px;
+color:var(--text);font-family:inherit;font-size:14px;resize:vertical;margin-bottom:10px}
+.btn{display:block;width:100%;padding:13px;border:0;border-radius:10px;font-family:inherit;font-size:14px;
+font-weight:600;cursor:pointer;text-align:center;text-decoration:none;color:#fff}
+.btn-p{background:linear-gradient(135deg,#1d4ed8,#3b82f6)}
+.btn-g{background:var(--surface2);border:1px solid var(--border2)}
+.btn-v{background:#7c3aed}.btn-t{background:#229ED9}.btn-w{background:#25D366}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.note{font-size:12px;color:var(--muted);margin:8px 0 0}.note a{color:var(--accent2)}
+.hint{font-size:12px;color:var(--muted);text-align:center;padding:0 8px}.hint a{color:var(--accent2)}
+.ok{background:var(--green)!important}
+details{margin-top:12px}summary{font-size:12px;color:var(--muted);cursor:pointer}
+.sk{background:linear-gradient(90deg,var(--surface2) 25%,#22344a 50%,var(--surface2) 75%);
+background-size:200% 100%;animation:sh 1.2s infinite;border-radius:6px;color:transparent!important}
+@keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hdr">
+    <div class="logo">L-TEX</div>
+    <div><h1>Посилання на Telegram-канал</h1><p>Статус проставляється автоматично</p></div>
+  </div>
+
+  <div id="state" class="badge badge-wait">⏳ Записуємо статус і готуємо посилання…</div>
+  <div id="joined" class="badge badge-join" hidden></div>
+  <div id="absent" class="badge badge-rep" hidden></div>
+
+  <div class="card">
+    <div class="card-t">Клієнт</div>
+    <div class="r"><span>ПІБ</span><b id="f-name" class="sk">Завантаження</b></div>
+    <div class="r"><span>Телефон</span><b id="f-phone" class="sk">Завантаження</b></div>
+    <div class="r"><span>Область</span><b id="f-region" class="sk">Завантаження</b></div>
+    <div class="r"><span>Менеджер</span><b id="f-manager" class="sk">Завантаження</b></div>
+    <div class="r"><span>ID</span><b id="f-id" class="sk">Завантаження</b></div>
+    <div class="r" id="row-interest" hidden><span>Цікавить</span><b id="f-interest"></b></div>
+  </div>
+
+  <div class="card" id="c-link" hidden>
+    <div class="card-t" id="link-title">Посилання клієнта</div>
+    <div class="link" id="f-link"></div>
+    <p class="note" id="link-note" hidden>Щойно клієнт перейде за ним — його нікнейм у Telegram сам зʼявиться в таблиці.</p>
+    <button class="btn btn-p" id="b-copy-link">📋 Скопіювати посилання</button>
+  </div>
+
+  <div class="card" id="c-msg" hidden>
+    <div class="card-t">Готове повідомлення клієнту</div>
+    <textarea id="f-msg" rows="16"></textarea>
+    <button class="btn btn-p" id="b-copy-msg">📋 Скопіювати повідомлення</button>
+  </div>
+
+  <div class="card" id="c-send" hidden>
+    <div class="card-t">Написати клієнту</div>
+    <div class="grid" id="g-send"></div>
+    <p class="note" id="go-note"></p>
+    <p class="note" id="no-app" hidden>Якщо месенджер напише, що такого номера немає — клієнта там справді немає.
+      Позначити: <a href="#" data-app="viber">немає в Viber</a> · <a href="#" data-app="telegram">у Telegram</a>
+      · <a href="#" data-app="whatsapp">у WhatsApp</a></p>
+    <p class="note" id="mark-note"></p>
+    <details id="d-fallback" hidden>
+      <summary>Не відкривається діалог?</summary>
+      <div class="grid" style="margin-top:8px" id="g-fallback"></div>
+    </details>
+  </div>
+
+  <p class="hint" id="foot" hidden></p>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// Адреса веб-застосунку Apps Script (Розгорнути → URL веб-додатка)
+var API = "https://script.google.com/macros/s/AKfycbz658U5qNEK-dpod2GOHWiKYW3jnta1zKBosKNvIbL6NvU8V_uC6HYIax0cWP0wodST/exec";
+// ─────────────────────────────────────────────────────────────
+
+var Q = (function () {
+  var o = {}, s = location.search.replace(/^\?/, "").split("&");
+  for (var i = 0; i < s.length; i++) {
+    if (!s[i]) continue;
+    var kv = s[i].split("=");
+    o[decodeURIComponent(kv[0])] = decodeURIComponent((kv[1] || "").replace(/\+/g, " "));
+  }
+  return o;
+})();
+
+var $ = function (id) { return document.getElementById(id); };
+function txt(id, v) { var e = $(id); if (e) { e.textContent = v || "—"; e.classList.remove("sk"); } }
+function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
+
+// Запасний шлях, якщо браузер не пускає звичайний запит на інший
+// домен: та сама адреса, але відповідь приходить тегом <script>.
+var jsonpN = 0, useJsonp = false;
+function jsonp(q) {
+  return new Promise(function (resolve, reject) {
+    var cb = "tgcb" + (++jsonpN);
+    var s  = document.createElement("script");
+    var timer = setTimeout(function () { done(); reject(new Error("timeout")); }, 25000);
+    function done() {
+      clearTimeout(timer);
+      try { delete window[cb]; } catch (e) { window[cb] = undefined; }
+      if (s.parentNode) s.parentNode.removeChild(s);
+    }
+    window[cb] = function (d) { done(); resolve(d); };
+    s.onerror = function () { done(); reject(new Error("script")); };
+    s.src = API + q + "&callback=" + cb;
+    document.head.appendChild(s);
+  });
+}
+
+function api(params) {
+  var q = "?a=tgjson&id=" + encodeURIComponent(Q.id || "") + "&t=" + encodeURIComponent(Q.t || "");
+  if (Q.r) q += "&r=" + encodeURIComponent(Q.r);
+  for (var k in params) q += "&" + k + "=" + encodeURIComponent(params[k]);
+  if (useJsonp) return jsonp(q);
+  return fetch(API + q).then(function (res) { return res.json(); })
+    .catch(function () { useJsonp = true; return jsonp(q); });
+}
+
+function fail(msg, showFallback) {
+  var st = $("state");
+  st.className = "badge badge-err";
+  st.textContent = "⚠️ " + msg;
+  ["f-name", "f-phone", "f-region", "f-manager", "f-id"].forEach(function (id) {
+    var e = $(id); if (e) { e.textContent = "—"; e.classList.remove("sk"); }
+  });
+  if (showFallback) {
+    var f = $("foot");
+    f.hidden = false;
+    f.innerHTML = 'Спробуйте <a href="' + esc(API + "?a=tg&id=" + encodeURIComponent(Q.id || "") +
+      "&t=" + encodeURIComponent(Q.t || "") + (Q.r ? "&r=" + encodeURIComponent(Q.r) : "")) +
+      '">відкрити стару сторінку</a> — вона повільніша, але працює без цього файлу.';
+  }
+}
+
+// ── Копіювання ──────────────────────────────────────────────
+function copyQuiet(t) {
+  var a = document.createElement("textarea");
+  a.value = t; a.style.position = "fixed"; a.style.top = "0"; a.style.opacity = "0";
+  document.body.appendChild(a); a.focus(); a.select();
+  try { a.setSelectionRange(0, t.length); } catch (e) {}
+  var done = false;
+  try { done = document.execCommand("copy"); } catch (e) { done = false; }
+  document.body.removeChild(a);
+  return done;
+}
+function copyBtn(btn, text) {
+  var orig = btn.textContent;
+  function ok() {
+    btn.textContent = "✅ Скопійовано"; btn.classList.add("ok");
+    setTimeout(function () { btn.textContent = orig; btn.classList.remove("ok"); }, 1800);
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok, function () {
+        if (copyQuiet(text)) ok(); else alert("Скопіюйте вручну:\n\n" + text);
+      });
+      return;
+    }
+  } catch (e) {}
+  if (copyQuiet(text)) ok(); else alert("Скопіюйте вручну:\n\n" + text);
+}
+
+// ── Перехід у месенджер: текст у буфер, потім діалог ─────────
+function go(url, text) {
+  var n = $("go-note");
+  function open(copied) {
+    if (n) n.textContent = copied
+      ? "✅ Текст скопійовано — у чаті натисніть «Вставити»"
+      : "⚠️ Текст не скопіювався — натисніть «Скопіювати повідомлення» вище";
+    setTimeout(function () { window.location.href = url; }, 120);
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { open(true); },
+                                               function () { open(copyQuiet(text)); });
+      return false;
+    }
+  } catch (e) {}
+  open(copyQuiet(text));
+  return false;
+}
+
+// ── Малюємо сторінку за даними ──────────────────────────────
+function render(d) {
+  var st = $("state");
+  if (d.repeat) {
+    st.className = "badge badge-rep";
+    st.textContent = "🔁 Уже надсилали " + (d.sentAt || "");
+  } else {
+    st.className = "badge badge-ok";
+    st.textContent = "✅ Статус «Надіслано» проставлено автоматично";
+  }
+
+  if (d.nick) {
+    var j = $("joined"); j.hidden = false;
+    j.textContent = "👤 Клієнт уже в каналі: " + d.nick + (d.joinedAt ? " · " + d.joinedAt : "");
+  }
+  if (d.absent && d.absent.length) {
+    var ab = $("absent"); ab.hidden = false;
+    ab.textContent = "❗ Номера немає в: " + d.absent.join(", ");
+  }
+
+  txt("f-name", d.name);
+  txt("f-phone", d.phone);
+  txt("f-region", d.region + (d.city ? ", " + d.city : ""));
+  txt("f-manager", d.manager);
+  txt("f-id", d.id);
+  if (d.interest) { $("row-interest").hidden = false; $("f-interest").textContent = d.interest; }
+
+  if (d.noLink) {
+    var c = $("c-link"); c.hidden = false; c.className = "card warn";
+    $("link-title").textContent = "⚠️ Немає посилання для цієї області";
+    $("f-link").textContent = "Додайте посилання в аркуш «🔗 TG-посилання» головної таблиці";
+    $("b-copy-link").hidden = true;
+  } else {
+    $("c-link").hidden = false;
+    $("link-title").textContent = d.personal
+      ? "Персональне посилання цього клієнта"
+      : "Унікальне посилання для області «" + (d.region || "за замовчуванням") + "»";
+    $("f-link").textContent = d.link;
+    if (d.personal && !d.nick) $("link-note").hidden = false;
+    $("b-copy-link").onclick = function () { copyBtn(this, d.link); };
+
+    $("c-msg").hidden = false;
+    $("f-msg").value = d.msg;
+    $("b-copy-msg").onclick = function () { copyBtn(this, $("f-msg").value); };
+
+    buildSend(d);
+  }
+
+  var f = $("foot");
+  f.hidden = false;
+  f.innerHTML = 'Статус, дата і саме посилання вже записані в головну таблицю і в таблицю менеджера. ' +
+    'Натиснули помилково? <a href="#" id="b-undo">Скасувати статус</a>.';
+  $("b-undo").onclick = function () {
+    api({undo: 1}).then(function (r) {
+      st.className = "badge badge-rep";
+      st.textContent = r.ok ? "↩️ Статус скасовано" : "⚠️ " + (r.error || "не вдалось");
+    }, function () { st.textContent = "⚠️ Не вдалось скасувати"; });
+    return false;
+  };
+}
+
+function buildSend(d) {
+  var g = $("g-send"), fb = $("g-fallback");
+  if (!d.intl) {
+    $("c-send").hidden = false;
+    $("go-note").textContent = "У картці немає номера телефону — надішліть посилання вручну.";
+    g.innerHTML = '<a class="btn btn-g" target="_blank" rel="noopener" href="' + esc(d.link) + '">Відкрити канал</a>';
+    return;
+  }
+  var msgEnc = encodeURIComponent(d.msg);
+  var noLink = encodeURIComponent(d.msg.split(d.link).join("").replace(/\n{3,}/g, "\n\n").trim());
+
+  g.innerHTML =
+    '<a class="btn btn-v" href="#" data-url="viber://chat?number=%2B' + d.intl + '">Viber</a>' +
+    '<a class="btn btn-t" href="#" data-url="tg://resolve?phone=' + d.intl + '">Telegram</a>' +
+    '<a class="btn btn-w" target="_blank" rel="noopener" href="https://wa.me/' + d.intl + '?text=' + msgEnc + '">WhatsApp</a>' +
+    '<a class="btn btn-g" target="_blank" rel="noopener" href="' + esc(d.link) + '">Відкрити канал</a>';
+
+  Array.prototype.forEach.call(g.querySelectorAll("a[data-url]"), function (a) {
+    a.onclick = function () { return go(a.getAttribute("data-url"), d.msg); };
+  });
+
+  $("go-note").textContent = "Відкриється діалог саме з " + d.phone +
+    ". Текст скопіюється сам — у чаті натисніть «Вставити». WhatsApp підставить текст одразу.";
+  $("no-app").hidden = false;
+  Array.prototype.forEach.call($("no-app").querySelectorAll("a[data-app]"), function (a) {
+    a.onclick = function () {
+      var n = $("mark-note");
+      n.textContent = "…записую";
+      api({noapp: a.getAttribute("data-app")}).then(function (r) {
+        n.textContent = (r.ok && r.marked && r.marked.length > 2 && r.marked !== "error")
+          ? "❗ Позначено: немає в " + r.marked + " — це збережено в таблиці"
+          : "⚠️ Не вдалось записати";
+      }, function () { n.textContent = "⚠️ Не вдалось записати"; });
+      return false;
+    };
+  });
+
+  fb.innerHTML =
+    '<a class="btn btn-g" target="_blank" rel="noopener" href="viber://forward?text=' + msgEnc + '">Viber — через список чатів</a>' +
+    '<a class="btn btn-g" target="_blank" rel="noopener" href="https://t.me/share/url?url=' +
+      encodeURIComponent(d.link) + '&text=' + noLink + '">Telegram — через список чатів</a>';
+  $("d-fallback").hidden = false;
+  $("c-send").hidden = false;
+}
+
+// ── Старт ───────────────────────────────────────────────────
+if (!Q.id || !Q.t) {
+  fail("Посилання неповне — відкрийте його кнопкою з таблиці.", false);
+} else {
+  api({}).then(function (d) {
+    if (!d.ok) { fail(d.error || "Не вдалось отримати дані", true); return; }
+    render(d);
+    // Друга частина роботи — коли сторінка вже перед очима
+    api({fin: 1, lr: d.linkRow || 0, stamp: d.stamp || ""}).catch(function () {});
+  }, function () {
+    fail("Немає звʼязку з таблицею. Перевірте інтернет і оновіть сторінку.", true);
+  });
+}
+</script>
+</body>
+</html>
