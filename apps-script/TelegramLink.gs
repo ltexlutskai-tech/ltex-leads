@@ -1737,7 +1737,119 @@ function tgWhoMarked(dateText) {
 
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  12. ПІДІГРІВ КОНТЕЙНЕРА                                 ║
+// ║  12. ПОЧАТИ З ЧИСТОГО АРКУША                             ║
+// ╚══════════════════════════════════════════════════════════╝
+// Прибирає слід тестового періоду, щоб менеджери починали з нуля.
+//
+//   tgResetProgress()             — лише показати, що буде прибрано
+//   tgResetProgress("почати")     — статуси, дати й примітки геть;
+//                                   видані посилання, ніки й дати
+//                                   приєднання ЛИШАЮТЬСЯ
+//   tgResetProgress("почати все") — плюс посилання, ніки, дати
+//                                   приєднання і лічильники видач
+//
+// Чому за замовчуванням посилання й ніки лишаються: посилання клієнт
+// уже міг отримати, і саме за ним бот упізнає його, коли той вступить
+// у канал. Стерти посилання — значить втратити цей звʼязок і видати
+// клієнту друге запрошення.
+//
+// Лог не видаляється — його перейменовують на «_tg_log_архів_дата»,
+// а поруч зʼявляється порожній. Звіт починає рахувати з нуля, але
+// історія лишається під рукою.
+function tgResetProgress(confirm) {
+  var word = tgStr_(confirm).toLowerCase();
+  var run  = word.indexOf("почати") === 0;
+  var full = word.indexOf("все") > 0;
+  var cols = full ? TG_BLOCK : 2;          // статус+дата, або весь блок
+  var out  = [run ? "🧹 ЧИЩЕННЯ" : "👀 ПОКАЗУЮ, ЩО БУДЕ ПРИБРАНО (нічого не змінюю)",
+              full ? "Режим: усе, включно з посиланнями, ніками й лічильниками"
+                   : "Режим: статуси, дати й примітки; посилання, ніки й дати приєднання лишаються",
+              ""];
+  var t0 = Date.now(), rows = 0, sheets = 0, left = 0;
+
+  function wipe(sh, statusCol, label) {
+    if (!sh || sh.getMaxColumns() < statusCol + cols - 1) return;
+    var start = (statusCol === TG_MAIN_STATUS) ? DATA_START : TG_MGR_DATA_START;
+    var last  = sh.getLastRow();
+    var n     = last - start + 1;
+    if (n < 1) return;
+
+    var vals = sh.getRange(start, statusCol, n, 1).getValues();
+    var busy = 0;
+    for (var i = 0; i < n; i++) if (tgStr_(vals[i][0])) busy++;
+    if (!busy) return;
+
+    sheets++; rows += busy;
+    out.push("   " + label + ": " + busy);
+    if (!run) return;
+
+    sh.getRange(start, statusCol, n, cols).clearContent();
+    try { sh.getRange(start, statusCol, n, 1).clearNote(); } catch (err) { Logger.log("clearNote: " + err); }
+    // кнопка знову має бути «📨 Надіслати», а не «🔁 Посилання»
+    try {
+      tgButtonsForSheet_(sh, start, statusCol === TG_MAIN_STATUS ? COL.ID : 1,
+                         statusCol === TG_MAIN_STATUS ? TG_MAIN_BTN : TG_MGR_BTN, statusCol, false);
+    } catch (err2) { Logger.log("кнопки: " + err2); }
+  }
+
+  var ss = tgSS_(MAIN_FILE_ID);
+  wipe(ss.getSheetByName(MAIN_SHEET), TG_MAIN_STATUS, "головна таблиця");
+  if (typeof TG1C_SHEET === "string") {
+    wipe(ss.getSheetByName(TG1C_SHEET), TG_MAIN_STATUS, "лист 1С у головній");
+  }
+
+  var managers = tgManagers_();
+  for (var name in managers) {
+    var fileId = managers[name].fileId;
+    if (!fileId) continue;
+    if (Date.now() - t0 > TG_TIME_BUDGET) { left++; continue; }
+    try {
+      var ms = tgSS_(fileId);
+      wipe(ms.getSheets()[0], TG_MGR_STATUS, name);
+      if (typeof TG1C_SHEET === "string") {
+        wipe(ms.getSheetByName(TG1C_SHEET), TG_MGR_STATUS, name + " (1С)");
+      }
+    } catch (err) { out.push("   ⚠️ " + name + ": " + err); }
+  }
+
+  if (full) {
+    var links = ss.getSheetByName(TG_LINKS_SHEET);
+    if (links && links.getLastRow() > 1) {
+      out.push("   лічильники видач у «" + TG_LINKS_SHEET + "»");
+      if (run) links.getRange(2, 4, links.getLastRow() - 1, 2).clearContent();
+    }
+  }
+
+  var log = ss.getSheetByName(TG_LOG_SHEET);
+  if (log && log.getLastRow() > 1) {
+    out.push("   лог: " + (log.getLastRow() - 1) + " записів → в архів");
+    if (run) {
+      var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy_HH-mm");
+      log.setName(TG_LOG_SHEET + "_архів_" + stamp);
+      ensureTgLogSheet_();
+    }
+  }
+
+  out.push("");
+  out.push((run ? "Прибрано рядків: " : "Буде прибрано рядків: ") + rows +
+           " у " + sheets + " аркуш(ах)");
+  if (left) {
+    out.push("⏳ Не встигли " + left + " файл(ів) — запустіть " +
+             "tgResetProgress(\"" + word + "\") ще раз");
+  } else if (run) {
+    out.push("✅ Готово. Кнопки на місці, менеджери починають з нуля.");
+  } else {
+    out.push("Щоб справді прибрати — запустіть tgResetProgress(\"почати\")" +
+             (full ? "" : " або tgResetProgress(\"почати все\")"));
+  }
+
+  Logger.log(out.join("\n"));
+  return out.join("\n");
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  13. ПІДІГРІВ КОНТЕЙНЕРА                                 ║
 // ╚══════════════════════════════════════════════════════════╝
 // Найдовше в кліку — холодний старт Apps Script: якщо застосунком
 // давно не користувались, контейнер треба підняти (1–2 с). Легкий
@@ -1773,7 +1885,7 @@ function tgWarmJob() {
 
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  13. ПЕРЕВІРКА (запустити після встановлення)            ║
+// ║  14. ПЕРЕВІРКА (запустити після встановлення)            ║
 // ╚══════════════════════════════════════════════════════════╝
 // Що реально відповідає за адресою, на яку ведуть кнопки?
 // Старий код віддає JSON {"status":"ok"}, новий — сторінку L-TEX.
