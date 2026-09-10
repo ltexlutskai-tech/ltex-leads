@@ -1661,7 +1661,81 @@ function ensureTgStatusDictionary_() {
 
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  11. ПІДІГРІВ КОНТЕЙНЕРА                                 ║
+// ║  11. ЗВІДКИ ВЗЯВСЯ СТАТУС                                ║
+// ╚══════════════════════════════════════════════════════════╝
+// Кнопка, проставляючи статус, лишає примітку на клітинці: хто менеджер,
+// яке джерело і коли сторінку відкривали. Якщо примітки немає — статус
+// поставила НЕ кнопка: або перенесення з файлу менеджера (тригер кожні
+// 15 хв підтягує статус, який менеджер вибрав руками зі списку), або
+// restoreTgStatusesFromLog(), або хтось вписав значення в клітинку.
+//
+// tgWhoMarked("10.09.2026 23:18") — розібрати конкретну хвилину
+// tgWhoMarked("10.09.2026")       — цілий день
+// tgWhoMarked()                   — усі позначки
+function tgWhoMarked(dateText) {
+  var want = tgStr_(dateText);
+  var out  = ["Шукаю позначки «надіслано»" + (want ? " з датою «" + want + "»" : "") + "\n"];
+  var ss   = tgSS_(MAIN_FILE_ID);
+  var names = [MAIN_SHEET];
+  if (typeof TG1C_SHEET === "string" && ss.getSheetByName(TG1C_SHEET)) names.push(TG1C_SHEET);
+
+  var total = 0, sources = {}, sample = [];
+  names.forEach(function (name) {
+    var sh = ss.getSheetByName(name);
+    if (!sh) return;
+    var lastRow = sh.getLastRow();
+    var n = lastRow - DATA_START + 1;
+    if (n < 1 || sh.getMaxColumns() < TG_MAIN_LINK) return;
+
+    var ids   = sh.getRange(DATA_START, COL.ID,     n, 1).getValues();
+    var mgr   = sh.getRange(DATA_START, COL.MANAGER, n, 1).getValues();
+    var tg    = sh.getRange(DATA_START, TG_MAIN_STATUS, n, 3).getValues();
+    var notes = sh.getRange(DATA_START, TG_MAIN_STATUS, n, 1).getNotes();
+
+    for (var i = 0; i < n; i++) {
+      if (!tgIsSent_(tgStr_(tg[i][0]))) continue;
+      var dt = tgDateStr_(tg[i][1]);
+      if (want && dt.indexOf(want) !== 0) continue;
+
+      var m   = /Джерело:\s*([^\n]+)/.exec(tgStr_(notes[i][0]));
+      var src = m ? m[1].trim() : "без примітки — статус поставила не кнопка";
+      sources[src] = (sources[src] || 0) + 1;
+      total++;
+      if (sample.length < 15) {
+        sample.push("   рядок " + (DATA_START + i) + " · " + tgStr_(ids[i][0]) + " · " +
+                    (tgStr_(mgr[i][0]) || "—") + " · " + (dt || "без дати") +
+                    " · посилання: " + (tgStr_(tg[i][2]) ? "є" : "НЕМА") + " · " + src);
+      }
+    }
+  });
+
+  out.push("Знайдено рядків: " + total);
+  out.push("Джерела:");
+  for (var k in sources) out.push("   " + k + " — " + sources[k]);
+  if (sample.length) { out.push("Приклади:"); out = out.concat(sample); }
+
+  // Лог веде кнопка й бот; якщо позначок більше, ніж записів у лозі,
+  // різницю зробило щось інше.
+  var log = ss.getSheetByName(TG_LOG_SHEET), inLog = 0;
+  if (log && log.getLastRow() > 1) {
+    var rows = log.getRange(2, 1, log.getLastRow() - 1, 9).getValues();
+    for (var r = 0; r < rows.length; r++) {
+      if (!want || tgDateStr_(rows[r][0]).indexOf(want) === 0) inLog++;
+    }
+  }
+  out.push("Записів у лозі «" + TG_LOG_SHEET + "» за цей час: " + inLog);
+  if (total > inLog) {
+    out.push("⚠️ Позначок більше, ніж записів у лозі на " + (total - inLog) +
+             ". Стільки статусів поставила не кнопка.");
+  }
+
+  Logger.log(out.join("\n"));
+  return out.join("\n");
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  12. ПІДІГРІВ КОНТЕЙНЕРА                                 ║
 // ╚══════════════════════════════════════════════════════════╝
 // Найдовше в кліку — холодний старт Apps Script: якщо застосунком
 // давно не користувались, контейнер треба підняти (1–2 с). Легкий
@@ -1697,7 +1771,7 @@ function tgWarmJob() {
 
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  12. ПЕРЕВІРКА (запустити після встановлення)            ║
+// ║  13. ПЕРЕВІРКА (запустити після встановлення)            ║
 // ╚══════════════════════════════════════════════════════════╝
 // Що реально відповідає за адресою, на яку ведуть кнопки?
 // Старий код віддає JSON {"status":"ok"}, новий — сторінку L-TEX.
