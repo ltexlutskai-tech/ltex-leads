@@ -625,7 +625,7 @@ function handleTgJson_(p) {
     } else if (tgStr_(p.t) !== tgToken_(id)) {
       out = {ok: false, error: "Посилання застаріле або пошкоджене. Запустіть refreshTgButtonsForce()."};
     } else if (p.fin === "1") {
-      out = {ok: true, fin: tgFinishFromPage_(id, p.r, p.lr, p.stamp)};
+      out = {ok: true, fin: tgFinishFromPage_(id, p.r, p.lr, p.stamp, p.nw === "1")};
     } else if (p.undo === "1") {
       var u = tgUndo_(id);
       out = u.ok ? {ok: true, undo: true, name: u.name, id: u.id} : {ok: false, error: u.error};
@@ -658,8 +658,9 @@ function tgJsonPayload_(r) {
     ok: true, id: r.id, name: r.name, phone: r.phone, intl: tgIntlPhone_(r.phone),
     region: r.region, city: r.city, manager: r.manager, interest: r.interest,
     link: r.link, personal: !!r.personal, noLink: !!r.noLink,
+    linkWhy: r.linkWhy || "", notSent: !!r.notSent,
     repeat: !!r.repeat, sentAt: r.sentAt, nick: r.nick || "", joinedAt: r.joinedAt || "",
-    absent: tgNoAppsFrom_(r.comment), msg: tgMessageText_(r),
+    absent: tgNoAppsFrom_(r.comment), msg: tgMessageText_(r), ms: r.ms || "",
     row: r.deferred ? r.deferred.row : 0,
     linkRow: r.deferred ? r.deferred.linkRow : 0,
     stamp: r.deferred ? r.deferred.stamp : ""
@@ -667,7 +668,7 @@ function tgJsonPayload_(r) {
 }
 
 // Друга частина роботи — коли сторінка вже перед очима менеджера
-function tgFinishFromPage_(id, hintRow, linkRow, stamp) {
+function tgFinishFromPage_(id, hintRow, linkRow, stamp, first) {
   try {
     var sheet = tgSheetForId_(id);
     var row   = tgFindRow_(sheet, COL.ID, DATA_START, id, hintRow);
@@ -679,6 +680,7 @@ function tgFinishFromPage_(id, hintRow, linkRow, stamp) {
                 tgStr_(d[TG_MAIN_JOINED - 1])];
     var manager = tgStr_(d[COL.MANAGER - 1]);
 
+    tgLogFromRow_(d, id, first);
     tgSyncToManager_(manager, id, vals);
     try {
       sheet.getRange(row, TG_MAIN_STATUS).setNote(
@@ -708,13 +710,17 @@ function tgFinishFromPage_(id, hintRow, linkRow, stamp) {
 // одне одному не заважають, а два кліки по одному рядку максимум
 // перезапишуть однакові значення.
 function markTgSent_(id, source, hintRow) {
+  var t0 = Date.now(), T = [];
+  function lap(k) { T.push(k + "=" + (Date.now() - t0)); }
   try {
     var main = tgSheetForId_(id);
+    lap("відкриття");
     if (!main) return {ok: false, error: "Аркуш для " + id + " не знайдено."};
     var row = tgFindRow_(main, COL.ID, DATA_START, id, hintRow);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено в таблиці."};
 
     var d = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+    lap("рядок");
     var info = {
       ok: true, id: id, row: row,
       name:     tgStr_(d[COL.NAME - 1]),
@@ -726,11 +732,11 @@ function markTgSent_(id, source, hintRow) {
     };
 
     var prevStatus = tgStr_(d[TG_MAIN_STATUS - 1]);
-    var prevDate   = tgStr_(d[TG_MAIN_DATE - 1]);
+    var prevDate   = tgDateStr_(d[TG_MAIN_DATE - 1]);
     var prevLink   = tgStr_(d[TG_MAIN_LINK - 1]);
     var repeat     = tgIsSent_(prevStatus);
     info.nick      = tgStr_(d[TG_MAIN_NICK - 1]);     // якщо клієнт уже приєднався
-    info.joinedAt  = tgStr_(d[TG_MAIN_JOINED - 1]);
+    info.joinedAt  = tgDateStr_(d[TG_MAIN_JOINED - 1]);
     info.comment   = tgStr_(d[COL.NEW_COMMENT - 1]);  // тут же позначки «немає в Viber»
 
     // Той самий клієнт може бути і лідом, і карткою 1С — тоді посилання
@@ -744,6 +750,7 @@ function markTgSent_(id, source, hintRow) {
 
     // Посилання: вже видане раніше → віддаємо те саме (клієнт має на руках саме його)
     var res = tgResolveLink_(info, prevLink);
+    lap("посилання");
     info.link      = res.link;
     info.linkRow   = res.row;
     info.personal  = !!res.personal;
@@ -754,21 +761,35 @@ function markTgSent_(id, source, hintRow) {
     var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
     info.sentAt = repeat && prevDate ? prevDate : stamp;
 
+    if (info.noLink && !info.linkWhy) {
+      info.linkWhy = "в аркуші «" + TG_LINKS_SHEET + "» немає посилання ні для області «" +
+                     (info.region || "—") + "», ні в рядку «За замовчуванням»";
+    }
+
+    // Немає посилання — немає чого надсилати. Статус не ставимо: інакше у
+    // звіті буде «надіслано» там, де менеджер нічого не надіслав.
+    if (!info.link && !repeat) { info.notSent = true; info.ms = T.join(" "); return info; }
+
     var vals = [repeat ? prevStatus : TG_STATUS_SENT, info.sentAt,
                 info.link || prevLink, info.nick, info.joinedAt];
     main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+    lap("статус");
     var note = "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source +
                "\nОстаннє відкриття: " + stamp;
 
-    tgLogAppend_([new Date(), id, info.name, info.phone, info.region, info.manager,
-                  info.link, source, repeat ? "повторно" : "вперше"]);
+    // Дозапис у лог — не в критичному шляху: сторінка його не показує, а
+    // звіт читає лог значно пізніше. Для кнопки це робить друга частина.
+    var logRow = [new Date(), id, info.name, info.phone, info.region, info.manager,
+                  info.link, source, repeat ? "повторно" : "вперше"];
+    if (source !== "кнопка в таблиці") { tgLogAppend_(logRow); lap("лог"); }
 
     // Решту — файл менеджера і лічильник — робить tgFinishClick() уже
     // після того, як менеджер побачив сторінку. Якщо браузер закриють
     // раніше, ці дані донесе плановий tgRefreshJob (кожні 15 хв).
     if (source === "кнопка в таблиці") {
       info.deferred = {managerVals: vals, linkRow: (!repeat && res.row) ? res.row : 0,
-                       stamp: stamp, twinId: info.twinId, row: row, note: note};
+                       stamp: stamp, twinId: info.twinId, row: row, note: note,
+                       logRow: logRow};
     } else {
       try { main.getRange(row, TG_MAIN_STATUS).setNote(note); } catch (err) { Logger.log("note: " + err); }
       tgSyncToManager_(info.manager, id, vals);
@@ -776,6 +797,7 @@ function markTgSent_(id, source, hintRow) {
       if (info.twinId && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(info.twinId, vals);
     }
 
+    info.ms = T.join(" ");
     return info;
   } catch (err) {
     Logger.log("markTgSent_: " + err);
@@ -786,14 +808,24 @@ function markTgSent_(id, source, hintRow) {
 // Викликається зі сторінки одразу після її показу: дописує статус у файл
 // менеджера і збільшує лічильник видач. Винесено з doGet, щоб сторінка
 // відкривалась швидше — це найповільніші дві операції (окремий файл).
-function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId, hintRow, note) {
+// Рядок у лог із уже прочитаних значень — щоб не читати таблицю вдруге
+function tgLogFromRow_(d, id, first) {
+  tgLogAppend_([new Date(), id, tgStr_(d[COL.NAME - 1]), tgStr_(d[COL.PHONE - 1]),
+                tgStr_(d[COL.REGION - 1]), tgStr_(d[COL.MANAGER - 1]),
+                tgStr_(d[TG_MAIN_LINK - 1]), "кнопка в таблиці",
+                first ? "вперше" : "повторно"]);
+}
+
+function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId, hintRow, note, first) {
   try {
     if (!id || token !== tgToken_(id)) return "bad-token";
     var main = tgSheetForId_(id);
     var row  = tgFindRow_(main, COL.ID, DATA_START, id, hintRow);
     if (row === -1) return "not-found";
     if (note) { try { main.getRange(row, TG_MAIN_STATUS).setNote(note); } catch (e) { Logger.log("note: " + e); } }
-    var manager = tgStr_(main.getRange(row, COL.MANAGER).getValue());
+    var d = main.getRange(row, 1, 1, TG_MAIN_LINK).getValues()[0];
+    tgLogFromRow_(d, id, first);
+    var manager = tgStr_(d[COL.MANAGER - 1]);
     if (managerVals && managerVals.length) tgSyncToManager_(manager, id, managerVals);
     if (linkRow) tgBumpCounter_(linkRow, stamp || "");
     if (twinId && managerVals && typeof tg1CMirrorTwin_ === "function") {
@@ -1016,11 +1048,17 @@ function tgResolveLink_(info, existing) {
 function tgPersonalLink_(info, rec) {
   try {
     var token = tgProp_("TG_BOT_TOKEN");
-    if (!token) return "";
+    if (!token) { info.linkWhy = "бот не підключений (немає TG_BOT_TOKEN)"; return ""; }
     var mode = (tgProp_("TG_LINK_MODE") || "request").toLowerCase();
-    if (mode === "off" || mode === "ні") return "";
+    if (mode === "off" || mode === "ні") {
+      info.linkWhy = "персональні посилання вимкнено (TG_LINK_MODE = off)"; return "";
+    }
     var chatId = (rec && rec.chatId) || tgProp_("TG_CHAT_ID");
-    if (!chatId) { Logger.log("tgPersonalLink_: не задано TG_CHAT_ID / Chat ID області"); return ""; }
+    if (!chatId) {
+      info.linkWhy = "не задано ні TG_CHAT_ID, ні Chat ID області в аркуші «" + TG_LINKS_SHEET + "»";
+      Logger.log("tgPersonalLink_: не задано TG_CHAT_ID / Chat ID області");
+      return "";
+    }
 
     var payload = {chat_id: chatId, name: tgLinkName_(info)};
     if (mode === "personal") payload.member_limit = 1;
@@ -1032,9 +1070,13 @@ function tgPersonalLink_(info, rec) {
     });
     var j = JSON.parse(res.getContentText());
     if (j && j.ok && j.result && j.result.invite_link) return j.result.invite_link;
-    Logger.log("tgPersonalLink_: " + (typeof tgExplainTgError_ === "function"
-      ? tgExplainTgError_(j && j.description) : res.getContentText().substring(0, 300)));
-  } catch (err) { Logger.log("tgPersonalLink_: " + err); }
+    info.linkWhy = "Telegram не дав посилання: " + (typeof tgExplainTgError_ === "function"
+      ? tgExplainTgError_(j && j.description) : tgStr_(j && j.description));
+    Logger.log("tgPersonalLink_: " + info.linkWhy);
+  } catch (err) {
+    info.linkWhy = "не вдалось звернутись до Telegram — " + err;
+    Logger.log("tgPersonalLink_: " + err);
+  }
   return "";
 }
 
@@ -1181,8 +1223,9 @@ function handleTgCommand(text, sender) {
     var r = markTgSent_(id, "бот Viber (" + ((sender && sender.name) || "—") + ")");
     if (!r.ok) { sendViber(sender.id, "Помилка: " + r.error); return; }
     if (r.noLink) {
-      sendViber(sender.id, "⚠️ Для області «" + (r.region || "—") + "» ще не задано посилання.\n" +
-        "Додайте його в аркуш «" + TG_LINKS_SHEET + "» головної таблиці.");
+      sendViber(sender.id, "⚠️ Нема чого надсилати: " + (r.linkWhy ||
+        ("для області «" + (r.region || "—") + "» ще не задано посилання")) +
+        (r.notSent ? "\nСтатус не проставлено." : ""));
       return;
     }
 
@@ -1295,9 +1338,9 @@ function tgLandingBody_(r) {
   h.push('</div>');
 
   if (r.noLink) {
-    h.push('<div class="card warn"><div class="card-t">⚠️ Немає посилання для цієї області</div>' +
-           '<p>Додайте унікальне посилання для області «' + tgEsc_(r.region || "—") +
-           '» в аркуш «' + tgEsc_(TG_LINKS_SHEET) + '» головної таблиці.</p></div>');
+    h.push('<div class="card warn"><div class="card-t">⚠️ Немає посилання — надсилати нічого</div>' +
+           '<p>' + tgEsc_(r.linkWhy || ("додайте посилання для області «" + (r.region || "—") +
+           "» в аркуш «" + TG_LINKS_SHEET + "» головної таблиці")) + '</p></div>');
   } else {
     h.push('<div class="card"><div class="card-t">' +
            (r.personal ? 'Персональне посилання цього клієнта'
@@ -1371,7 +1414,8 @@ function tgLandingBody_(r) {
            '.tgFinishClick(' + tgJson_(r.id) + ',' + tgJson_(tgToken_(r.id)) + ',' +
            tgJson_(r.deferred.managerVals) + ',' + (r.deferred.linkRow || 0) + ',' +
            tgJson_(r.deferred.stamp) + ',' + tgJson_(r.deferred.twinId || "") + ',' +
-           (r.deferred.row || 0) + ',' + tgJson_(r.deferred.note || "") + ');}catch(e){}</script>');
+           (r.deferred.row || 0) + ',' + tgJson_(r.deferred.note || "") + ',' +
+           (r.repeat ? 0 : 1) + ');}catch(e){}</script>');
   }
   return h.join("");
 }
@@ -1532,6 +1576,15 @@ function tgIsSent_(status) {
 
 function tgStr_(v) {
   return v === null || v === undefined ? "" : v.toString().trim();
+}
+
+// Клітинка з датою віддає обʼєкт Date, і його toString() — це
+// «Fri Sep 11 2026 09:18:00 GMT+0300 (…)». Для людини це шум.
+function tgDateStr_(v) {
+  if (v && typeof v.getTime === "function" && !isNaN(v.getTime())) {
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
+  }
+  return tgStr_(v);
 }
 
 // 0671234567 → 380671234567

@@ -128,7 +128,16 @@ var Q = (function () {
   return o;
 })();
 
+var T0 = Date.now();
 var $ = function (id) { return document.getElementById(id); };
+function diag(d) {
+  if (!Q.diag) return;
+  var p = document.createElement("p");
+  p.className = "hint";
+  p.textContent = "⏱ усього " + (Date.now() - T0) + " мс · у таблиці: " + (d.ms || "—") +
+    (useJsonp ? " · запасним шляхом" : "");
+  document.querySelector(".wrap").appendChild(p);
+}
 function txt(id, v) { var e = $(id); if (e) { e.textContent = v || "—"; e.classList.remove("sk"); } }
 function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
 
@@ -228,7 +237,10 @@ function go(url, text) {
 // ── Малюємо сторінку за даними ──────────────────────────────
 function render(d) {
   var st = $("state");
-  if (d.repeat) {
+  if (d.notSent) {
+    st.className = "badge badge-err";
+    st.textContent = "⚠️ Статус не проставлено — немає посилання, яке можна надіслати";
+  } else if (d.repeat) {
     st.className = "badge badge-rep";
     st.textContent = "🔁 Уже надсилали " + (d.sentAt || "");
   } else {
@@ -254,8 +266,9 @@ function render(d) {
 
   if (d.noLink) {
     var c = $("c-link"); c.hidden = false; c.className = "card warn";
-    $("link-title").textContent = "⚠️ Немає посилання для цієї області";
-    $("f-link").textContent = "Додайте посилання в аркуш «🔗 TG-посилання» головної таблиці";
+    $("link-title").textContent = "⚠️ Немає посилання — надсилати нічого";
+    $("f-link").textContent = d.linkWhy ||
+      "Додайте посилання в аркуш «🔗 TG-посилання» головної таблиці";
     $("b-copy-link").hidden = true;
   } else {
     $("c-link").hidden = false;
@@ -275,6 +288,11 @@ function render(d) {
 
   var f = $("foot");
   f.hidden = false;
+  if (d.notSent) {
+    f.textContent = "У таблиці нічого не змінено. Щойно посилання зʼявиться — " +
+      "натисніть кнопку ще раз.";
+    return;
+  }
   f.innerHTML = 'Статус, дата і саме посилання вже записані в головну таблицю і в таблицю менеджера. ' +
     'Натиснули помилково? <a href="#" id="b-undo">Скасувати статус</a>.';
   $("b-undo").onclick = function () {
@@ -338,8 +356,13 @@ if (!Q.id || !Q.t) {
   api({}).then(function (d) {
     if (!d.ok) { fail(d.error || "Не вдалось отримати дані", true); return; }
     render(d);
-    // Друга частина роботи — коли сторінка вже перед очима
-    api({fin: 1, lr: d.linkRow || 0, stamp: d.stamp || ""}).catch(function () {});
+    diag(d);
+    // Друга частина роботи — коли сторінка вже перед очима. Якщо статус не
+    // ставився, доробляти нічого.
+    if (!d.notSent) {
+      api({fin: 1, lr: d.linkRow || 0, stamp: d.stamp || "", nw: d.repeat ? 0 : 1})
+        .catch(function () {});
+    }
   }, function () {
     fail("Немає звʼязку з таблицею. Перевірте інтернет і оновіть сторінку.", true);
   });
