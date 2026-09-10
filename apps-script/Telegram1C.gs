@@ -34,7 +34,7 @@
 var TG1C_PREFIX     = "1C-";              // ID рядка 1С: «1C-4741»
 var TG1C_SHEET      = "🏭 Клієнти 1С";     // лист у головній і в менеджера
 var TG1C_AGENTS     = "🏭 Агенти 1С";      // відповідність «агент 1С → менеджер»
-var TG1C_BATCH      = 1500;               // скільки нових рядків додаємо за раз
+var TG1C_BATCH      = 4000;               // скільки нових рядків додаємо за один запуск
 
 // Колонки бази 1С, яких немає в ONS_COL (шукаються за заголовком)
 var ONS_HDR_CHANNEL = ["канал пошуку", "канал"];
@@ -66,7 +66,8 @@ function install1CTelegram() {
   add("sync", "Перенесення клієнтів із бази 1С", function () {
     var r = sync1CRegister();
     report.push("   додано: " + r.added + ", оновлено: " + r.updated +
-                ", звʼязано з лідами: " + r.linked + (r.more ? ", лишилось: " + r.more : ""));
+                ", звʼязано з лідами: " + r.linked + (r.more ? ", ЩЕ ЛИШИЛОСЬ: " + r.more : ""));
+    return r.more === 0;   // false → крок не завершено, потрібен ще один запуск
   });
   add("register.fmt", "Головна: списки й кнопки на листі 1С", function () {
     var sh = tg1CRegister_();
@@ -74,26 +75,52 @@ function install1CTelegram() {
     tgButtonsForSheet_(sh, DATA_START, COL.ID, TG_MAIN_BTN, TG_MAIN_STATUS, true);
   });
 
+  // Розкладати по менеджерах є сенс лише коли всі клієнти вже в головній.
+  // Ключ кроку містить кількість рядків реєстру: побільшав реєстр —
+  // ключ інший, отже крок виконається знову і донесе нові рядки.
+  var props    = PropertiesService.getScriptProperties();
+  var progress = {};
+  try { progress = JSON.parse(props.getProperty("TG1C_INSTALL_DONE") || "{}"); } catch (err) { progress = {}; }
+
   var managers = tgManagers_();
   var names    = Object.keys(managers);
-  for (var i = 0; i < names.length; i++) {
-    var fileId = managers[names[i]].fileId;
-    if (!fileId) continue;
-    add("mgr." + names[i], names[i] + ": лист «" + TG1C_SHEET + "»", tg1CMgrStep_(names[i], fileId));
+  if (progress.sync) {
+    var regRows = tg1CRegisterRows_();
+    for (var i = 0; i < names.length; i++) {
+      var fileId = managers[names[i]].fileId;
+      if (!fileId) continue;
+      add("mgr." + names[i] + "." + regRows, names[i] + ": лист «" + TG1C_SHEET + "»",
+          tg1CMgrStep_(names[i], fileId));
+    }
   }
 
   var res = tgRunSteps_("TG1C_INSTALL_DONE", steps, report);
+
+  var after = {};
+  try { after = JSON.parse(props.getProperty("TG1C_INSTALL_DONE") || "{}"); } catch (err) { after = {}; }
+  var needMore = res.left > 0 || !after.sync || !progress.sync;
+
   Logger.log(report.join("\n"));
-  if (res.left > 0) {
-    Logger.log("\n⏳ Не встигли за один запуск. Запустіть install1CTelegram() ЩЕ РАЗ — " +
-               "продовжить з місця зупинки. Лишилось кроків: " + res.left + " із " + res.total);
+  if (needMore) {
+    Logger.log("\n⏳ Ще не все. Запустіть install1CTelegram() ЩЕ РАЗ — продовжить з місця зупинки." +
+               (!after.sync ? "\n   Клієнти з 1С перенесені не всі — наступний запуск довантажить решту."
+                            : "\n   Лишилось кроків: " + res.left + " із " + res.total));
   } else {
-    Logger.log("\n🎉 Клієнти 1С розкладені по менеджерах (" + res.total + " кроків).\n" +
+    Logger.log("\n🎉 Клієнти 1С розкладені по менеджерах.\n" +
+               "   У головній таблиці рядків 1С: " + tg1CRegisterRows_() + "\n" +
                "   Перевірте лист «" + TG1C_AGENTS + "»: якщо навпроти агента порожньо — " +
-               "впишіть менеджера вручну і запустіть install1CTelegram() ще раз.\n" +
+               "впишіть менеджера вручну, далі sync1CRegister() і sync1CToManagers().\n" +
                "   Далі: setup1CTrigger() — щоденне оновлення з 1С.");
   }
   return report.join("\n");
+}
+
+// Скільки рядків з клієнтами вже в реєстрі
+function tg1CRegisterRows_() {
+  try {
+    var sh = tgSS_(MAIN_FILE_ID).getSheetByName(TG1C_SHEET);
+    return sh ? Math.max(sh.getLastRow() - DATA_START + 1, 0) : 0;
+  } catch (err) { return 0; }
 }
 
 function reset1CInstall() {

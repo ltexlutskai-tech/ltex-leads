@@ -199,10 +199,18 @@ function tgRunSteps_(progressKey, steps, report) {
     if (Date.now() - t0 > TG_TIME_BUDGET) { left++; continue; }
     var s0 = Date.now();
     try {
-      st.fn();
-      done[st.key] = true;
-      props.setProperty(progressKey, JSON.stringify(done));
-      report.push("✅ " + st.title + "  (" + ((Date.now() - s0) / 1000).toFixed(1) + " с)");
+      // Крок може повернути false — «зроблено частину, треба ще раз».
+      // Тоді не позначаємо його виконаним, інакше залишок ніколи не доїде.
+      var ok = st.fn();
+      var sec = ((Date.now() - s0) / 1000).toFixed(1);
+      if (ok === false) {
+        left++;
+        report.push("⏳ " + st.title + " — частково  (" + sec + " с)");
+      } else {
+        done[st.key] = true;
+        props.setProperty(progressKey, JSON.stringify(done));
+        report.push("✅ " + st.title + "  (" + sec + " с)");
+      }
     } catch (err) {
       report.push("❌ " + st.title + ": " + err);
     }
