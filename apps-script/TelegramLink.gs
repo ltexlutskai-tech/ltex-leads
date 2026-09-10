@@ -64,6 +64,22 @@ var TG_STATUS_LIST   = [TG_STATUS_SENT, TG_STATUS_JOINED, "🚫 Не потрі�
 var TG_SS_CACHE_  = {};
 var TG_MGR_CACHE_ = null;
 
+// PropertiesService.getProperty() — окремий виклик служби щоразу, а на
+// шляху кліку їх було зо пʼять. Читаємо всі властивості один раз.
+var TG_PROPS_CACHE_ = null;
+function tgProp_(key) {
+  if (!TG_PROPS_CACHE_) {
+    try { TG_PROPS_CACHE_ = PropertiesService.getScriptProperties().getProperties() || {}; }
+    catch (err) { TG_PROPS_CACHE_ = {}; }
+  }
+  var v = TG_PROPS_CACHE_[key];
+  return v === undefined || v === null ? "" : String(v).trim();
+}
+function tgSetProp_(key, value) {
+  PropertiesService.getScriptProperties().setProperty(key, value);
+  if (TG_PROPS_CACHE_) TG_PROPS_CACHE_[key] = value;
+}
+
 function tgSS_(fileId) {
   if (!TG_SS_CACHE_[fileId]) TG_SS_CACHE_[fileId] = SpreadsheetApp.openById(fileId);
   return TG_SS_CACHE_[fileId];
@@ -259,6 +275,17 @@ function tgMainCols_() {
 function tgMgrCols_() {
   return {btn: TG_MGR_BTN, status: TG_MGR_STATUS, date: TG_MGR_DATE,
           link: TG_MGR_LINK, nick: TG_MGR_NICK, joined: TG_MGR_JOINED};
+}
+
+// «Лід: LTEX-…» / «1С: 4741» у колонці дублів → ID другого рядка клієнта
+function tgTwinFromDups_(v) {
+  var s = tgStr_(v);
+  if (!s) return "";
+  var lead = /(LTEX-\d{8}-\d{4})/.exec(s);
+  if (lead) return lead[1];
+  var ons = /1С:\s*([A-Za-z0-9\-_]+)/i.exec(s);
+  if (ons && typeof TG1C_PREFIX === "string") return TG1C_PREFIX + ons[1];
+  return "";
 }
 
 // Скільки рядків нижче заголовка оформлюємо. На великих аркушах
@@ -493,7 +520,7 @@ function tgFillButtons_(sheet, startRow, ids, btnCol, statusCol, force) {
       continue;
     }
 
-    var want = tgButtonUrl_(id);
+    var want = tgButtonUrl_(id, startRow + i);
     var lbl  = tgIsSent_(sts[i][0]) ? TG_BTN_LABEL_SENT : TG_BTN_LABEL;
     if (force || url !== want || txt !== lbl) {
       out.push([SpreadsheetApp.newRichTextValue().setText(lbl).setLinkUrl(want).build()]);
@@ -512,9 +539,12 @@ function tgFillButtons_(sheet, startRow, ids, btnCol, statusCol, force) {
   return changed;
 }
 
-// Адреса, на яку веде кнопка рядка
-function tgButtonUrl_(id) {
-  return getTgTrackUrl_() + "?a=tg&id=" + encodeURIComponent(id) + "&t=" + tgToken_(id);
+// Адреса, на яку веде кнопка рядка. Номер рядка (&r=) — підказка, щоб
+// не перечитувати всю колонку ID; він перевіряється при відкритті, тож
+// зсув рядків нічого не ламає.
+function tgButtonUrl_(id, row) {
+  return getTgTrackUrl_() + "?a=tg&id=" + encodeURIComponent(id) + "&t=" + tgToken_(id) +
+         (row ? "&r=" + row : "");
 }
 
 function tgColLetter_(col) {
@@ -546,7 +576,7 @@ function handleTgClick(e) {
       return tgPage_(tgUndoBody_(u));
     }
 
-    var r = markTgSent_(id, "кнопка в таблиці");
+    var r = markTgSent_(id, "кнопка в таблиці", p.r);
     if (!r.ok) return tgPage_(tgErrorBody_(r.error, ""));
     return tgPage_(tgLandingBody_(r));
 
@@ -561,13 +591,15 @@ function handleTgClick(e) {
 // ║  4. ЯДРО: проставляння статусу                           ║
 // ╚══════════════════════════════════════════════════════════╝
 // source: "кнопка в таблиці" | "бот Viber" | ...
-function markTgSent_(id, source) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) return {ok: false, error: "Система зайнята, спробуйте ще раз за секунду."};
+// Без LockService: блокування скрипта ставить у чергу ВСІ кліки всіх
+// менеджерів, а всередині ще й чекає відповіді Telegram. Різні рядки
+// одне одному не заважають, а два кліки по одному рядку максимум
+// перезапишуть однакові значення.
+function markTgSent_(id, source, hintRow) {
   try {
     var main = tgSheetForId_(id);
     if (!main) return {ok: false, error: "Аркуш для " + id + " не знайдено."};
-    var row = tgFindRow_(main, COL.ID, DATA_START, id);
+    var row = tgFindRow_(main, COL.ID, DATA_START, id, hintRow);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено в таблиці."};
 
     var d = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
@@ -591,7 +623,9 @@ function markTgSent_(id, source) {
 
     // Той самий клієнт може бути і лідом, і карткою 1С — тоді посилання
     // в них одне: беремо вже видане з будь-якого з двох рядків.
-    info.twinId = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(main, row) : "";
+    // Значення колонки дублів уже прочитане разом із рядком — не читаємо вдруге
+    info.twinId = (typeof tgTwinFromDups_ === "function")
+      ? tgTwinFromDups_(tgStr_(d[COL.DUPS - 1])) : "";
     if (!prevLink && info.twinId && typeof tg1CTwinLink_ === "function") {
       prevLink = tg1CTwinLink_(info.twinId);
     }
@@ -611,10 +645,8 @@ function markTgSent_(id, source) {
     var vals = [repeat ? prevStatus : TG_STATUS_SENT, info.sentAt,
                 info.link || prevLink, info.nick, info.joinedAt];
     main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
-    try {
-      main.getRange(row, TG_MAIN_STATUS).setNote(
-        "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source + "\nОстаннє відкриття: " + stamp);
-    } catch (err) { Logger.log("note: " + err); }
+    var note = "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source +
+               "\nОстаннє відкриття: " + stamp;
 
     tgLogAppend_([new Date(), id, info.name, info.phone, info.region, info.manager,
                   info.link, source, repeat ? "повторно" : "вперше"]);
@@ -624,8 +656,9 @@ function markTgSent_(id, source) {
     // раніше, ці дані донесе плановий tgRefreshJob (кожні 15 хв).
     if (source === "кнопка в таблиці") {
       info.deferred = {managerVals: vals, linkRow: (!repeat && res.row) ? res.row : 0,
-                       stamp: stamp, twinId: info.twinId};
+                       stamp: stamp, twinId: info.twinId, row: row, note: note};
     } else {
+      try { main.getRange(row, TG_MAIN_STATUS).setNote(note); } catch (err) { Logger.log("note: " + err); }
       tgSyncToManager_(info.manager, id, vals);
       if (!repeat && res.row) tgBumpCounter_(res.row, stamp);
       if (info.twinId && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(info.twinId, vals);
@@ -635,20 +668,19 @@ function markTgSent_(id, source) {
   } catch (err) {
     Logger.log("markTgSent_: " + err);
     return {ok: false, error: "Помилка запису: " + err};
-  } finally {
-    lock.releaseLock();
   }
 }
 
 // Викликається зі сторінки одразу після її показу: дописує статус у файл
 // менеджера і збільшує лічильник видач. Винесено з doGet, щоб сторінка
 // відкривалась швидше — це найповільніші дві операції (окремий файл).
-function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId) {
+function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId, hintRow, note) {
   try {
     if (!id || token !== tgToken_(id)) return "bad-token";
     var main = tgSheetForId_(id);
-    var row  = tgFindRow_(main, COL.ID, DATA_START, id);
+    var row  = tgFindRow_(main, COL.ID, DATA_START, id, hintRow);
     if (row === -1) return "not-found";
+    if (note) { try { main.getRange(row, TG_MAIN_STATUS).setNote(note); } catch (e) { Logger.log("note: " + e); } }
     var manager = tgStr_(main.getRange(row, COL.MANAGER).getValue());
     if (managerVals && managerVals.length) tgSyncToManager_(manager, id, managerVals);
     if (linkRow) tgBumpCounter_(linkRow, stamp || "");
@@ -759,9 +791,20 @@ function tgSyncToManager_(managerName, id, vals) {
   } catch (err) { Logger.log("tgSyncToManager_: " + err); }
 }
 
-function tgFindRow_(sheet, idCol, startRow, id) {
+// hintRow — номер рядка, зашитий у саму кнопку. Перевіряємо одну
+// клітинку замість того, щоб читати всю колонку ID (на листі 1С це
+// майже 5000 рядків). Якщо рядок зсунувся — чесно шукаємо.
+function tgFindRow_(sheet, idCol, startRow, id, hintRow) {
   var lastRow = sheet.getLastRow();
   if (lastRow < startRow) return -1;
+
+  var hint = parseInt(hintRow, 10);
+  if (hint >= startRow && hint <= lastRow) {
+    try {
+      if (tgStr_(sheet.getRange(hint, idCol).getValue()) === id) return hint;
+    } catch (err) { Logger.log("tgFindRow_ hint: " + err); }
+  }
+
   var data = sheet.getRange(startRow, idCol, lastRow - startRow + 1, 1).getValues();
   for (var i = 0; i < data.length; i++) {
     if (data[i][0] && data[i][0].toString().trim() === id) return startRow + i;
@@ -860,12 +903,11 @@ function tgResolveLink_(info, existing) {
 //   TG_LINK_MODE = "personal" — одноразове посилання (member_limit: 1).
 function tgPersonalLink_(info, rec) {
   try {
-    var props = PropertiesService.getScriptProperties();
-    var token = (props.getProperty("TG_BOT_TOKEN") || "").trim();
+    var token = tgProp_("TG_BOT_TOKEN");
     if (!token) return "";
-    var mode = (props.getProperty("TG_LINK_MODE") || "request").trim().toLowerCase();
+    var mode = (tgProp_("TG_LINK_MODE") || "request").toLowerCase();
     if (mode === "off" || mode === "ні") return "";
-    var chatId = (rec && rec.chatId) || (props.getProperty("TG_CHAT_ID") || "").trim();
+    var chatId = (rec && rec.chatId) || tgProp_("TG_CHAT_ID");
     if (!chatId) { Logger.log("tgPersonalLink_: не задано TG_CHAT_ID / Chat ID області"); return ""; }
 
     var payload = {chat_id: chatId, name: tgLinkName_(info)};
@@ -1216,7 +1258,8 @@ function tgLandingBody_(r) {
     h.push('<script>try{google.script.run.withFailureHandler(function(){})' +
            '.tgFinishClick(' + tgJson_(r.id) + ',' + tgJson_(tgToken_(r.id)) + ',' +
            tgJson_(r.deferred.managerVals) + ',' + (r.deferred.linkRow || 0) + ',' +
-           tgJson_(r.deferred.stamp) + ',' + tgJson_(r.deferred.twinId || "") + ');}catch(e){}</script>');
+           tgJson_(r.deferred.stamp) + ',' + tgJson_(r.deferred.twinId || "") + ',' +
+           (r.deferred.row || 0) + ',' + tgJson_(r.deferred.note || "") + ');}catch(e){}</script>');
   }
   return h.join("");
 }
@@ -1240,7 +1283,7 @@ function tgRow_(label, value) {
 }
 
 function tgMessageText_(r) {
-  var tpl = PropertiesService.getScriptProperties().getProperty("TG_MSG_TEMPLATE") || TG_MSG_DEFAULT;
+  var tpl = tgProp_("TG_MSG_TEMPLATE") || TG_MSG_DEFAULT;
   return tpl.replace(/\{name\}/g, tgFirstName_(r.name))
             .replace(/\{manager\}/g, tgFirstName_(r.manager) || "L-TEX")
             .replace(/\{link\}/g, r.link || "");
@@ -1341,17 +1384,16 @@ function tgHtmlShell_(body) {
 
 // URL веб-застосунку. Можна перевизначити Script Property TG_TRACK_URL.
 function getTgTrackUrl_() {
-  var u = PropertiesService.getScriptProperties().getProperty("TG_TRACK_URL");
-  if (u && u.trim()) return u.trim();
+  var u = tgProp_("TG_TRACK_URL");
+  if (u) return u;
   if (typeof WEBHOOK_URL === "string" && WEBHOOK_URL) return WEBHOOK_URL;
   return ScriptApp.getService().getUrl();
 }
 
 // Підпис рядка (щоб статус не можна було проставити «з вулиці»)
 function tgToken_(id) {
-  var props  = PropertiesService.getScriptProperties();
-  var secret = props.getProperty("TG_SECRET");
-  if (!secret) { secret = Utilities.getUuid(); props.setProperty("TG_SECRET", secret); }
+  var secret = tgProp_("TG_SECRET");
+  if (!secret) { secret = Utilities.getUuid(); tgSetProp_("TG_SECRET", secret); }
   var sig = Utilities.computeHmacSha256Signature(String(id), secret);
   var hex = "";
   for (var i = 0; i < sig.length && hex.length < 10; i++) {
