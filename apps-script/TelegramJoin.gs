@@ -169,7 +169,7 @@ function tgRecordJoin_(user, link, chat, kind) {
     var linkName  = tgStr_(link.name);
     var stamp     = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
 
-    var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+    var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
     if (!main) return;
     var row = tgFindRowByLink_(main, inviteUrl, linkName);
 
@@ -209,7 +209,6 @@ function tgRecordJoin_(user, link, chat, kind) {
 
     // Колонка «Telegram» (O) заповнюється, лише якщо була порожня
     if (!tgStr_(d[COL.TG - 1])) main.getRange(row, COL.TG).setValue(nick);
-    SpreadsheetApp.flush();
 
     tgSyncToManager_(manager, id, vals);
     tgLogAppend_([new Date(), id, name, phone, region, manager, vals[2], kind,
@@ -217,7 +216,7 @@ function tgRecordJoin_(user, link, chat, kind) {
 
     // Сповіщення менеджеру: нік + номер в одному повідомленні
     try {
-      var mgr = manager ? getManagers()[manager] : null;
+      var mgr = manager ? tgManagers_()[manager] : null;
       if (mgr && mgr.viberId) {
         sendViber(mgr.viberId,
           "🎉 Клієнт приєднався до Telegram-каналу!\n\n" +
@@ -303,7 +302,7 @@ function handleNickCommand(text, sender) {
 
 // Пошук в обидва боки: за ніком (@ivan) або за номером телефону
 function findLeadByTgNick(query) {
-  var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+  var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
   if (!main || main.getMaxColumns() < TG_MAIN_JOINED) return null;
   var lastRow = main.getLastRow();
   if (lastRow < DATA_START) return null;
@@ -402,7 +401,7 @@ function testTelegramBot() {
 // Разова перевірка звʼязки «посилання → лід»: створює тестове запрошення
 // для першого ліда з таблиці і одразу його відкликає.
 function testTgPersonalLink() {
-  var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+  var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
   var lastRow = main.getLastRow();
   if (lastRow < DATA_START) { Logger.log("Немає даних"); return; }
   var d = main.getRange(DATA_START, 1, 1, COL.MANAGER).getValues()[0];

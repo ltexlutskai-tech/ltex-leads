@@ -59,6 +59,23 @@ var TG_STATUS_SENT   = "✅ Надіслано";
 var TG_STATUS_JOINED = "👤 Приєднався";
 var TG_STATUS_LIST   = [TG_STATUS_SENT, TG_STATUS_JOINED, "🚫 Не потрібно", "❌ Відмовився"];
 
+// Одне натискання кнопки відкривало головну таблицю пʼять разів.
+// Кеш живе рівно один запуск скрипта, тож дані завжди свіжі.
+var TG_SS_CACHE_  = {};
+var TG_MGR_CACHE_ = null;
+
+function tgSS_(fileId) {
+  if (!TG_SS_CACHE_[fileId]) TG_SS_CACHE_[fileId] = SpreadsheetApp.openById(fileId);
+  return TG_SS_CACHE_[fileId];
+}
+function tgMainSheetCached_() {
+  return tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+}
+function tgManagers_() {
+  if (!TG_MGR_CACHE_) TG_MGR_CACHE_ = getManagers();
+  return TG_MGR_CACHE_;
+}
+
 // Обмеження часу виконання Apps Script — 6 хвилин. Установка йде
 // кроками з бюджетом 4 хв: що не встигли — доробить наступний запуск.
 var TG_SETUP_ROWS  = 5000;          // рядків нижче заголовка оформлюємо
@@ -120,7 +137,7 @@ function installTgColumns() {
     tgSetupFormat_(tgMainSheet_(), tgMainCols_());
   });
 
-  var managers = getManagers();
+  var managers = tgManagers_();
   var names    = Object.keys(managers);
   for (var i = 0; i < names.length; i++) {
     var fileId = managers[names[i]].fileId;
@@ -169,18 +186,18 @@ function installTgColumns() {
 }
 
 function tgMainSheet_() {
-  var sh = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+  var sh = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
   if (!sh) throw new Error("аркуш «" + MAIN_SHEET + "» не знайдено");
   return sh;
 }
 
 // Замикання для кроків по менеджерах (щоб не ловити класичну пастку з var у циклі)
 function tgSetupMgrStep_(fileId) {
-  return function () { tgSetupSheet_(SpreadsheetApp.openById(fileId).getSheets()[0], tgMgrCols_()); };
+  return function () { tgSetupSheet_(tgSS_(fileId).getSheets()[0], tgMgrCols_()); };
 }
 function tgButtonsMgrStep_(fileId) {
   return function () {
-    var sh = SpreadsheetApp.openById(fileId).getSheets()[0];
+    var sh = tgSS_(fileId).getSheets()[0];
     tgButtonsForSheet_(sh, TG_MGR_DATA_START, 1, TG_MGR_BTN, TG_MGR_STATUS, true);
   };
 }
@@ -339,7 +356,7 @@ function refreshTgButtonsForce() { return tgRefreshAll_(true); } // переза
 
 function tgRefreshAll_(force) {
   var t0   = Date.now();
-  var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+  var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
   if (!main) { Logger.log("TG: аркуш " + MAIN_SHEET + " не знайдено"); return 0; }
   var lastRow = main.getLastRow();
   if (lastRow < DATA_START) return 0;
@@ -364,14 +381,14 @@ function tgRefreshAll_(force) {
     byId[id].status = byId[id].vals[0];
   }
 
-  var managers = getManagers(), up = 0, down = 0, skipped = 0;
+  var managers = tgManagers_(), up = 0, down = 0, skipped = 0;
   for (var name in managers) {
     var fileId = managers[name].fileId;
     if (!fileId) continue;
     // Ліміт Apps Script — 6 хв. Що не встигли, доробить наступний запуск тригера.
     if (Date.now() - t0 > TG_TIME_BUDGET) { skipped++; continue; }
     try {
-      var sh = SpreadsheetApp.openById(fileId).getSheets()[0];
+      var sh = tgSS_(fileId).getSheets()[0];
       var ml = sh.getLastRow();
       if (ml < TG_MGR_DATA_START) continue;
       if (sh.getMaxColumns() < TG_MGR_LINK) { Logger.log("TG: " + name + " — немає колонок, запустіть installTgColumns()"); continue; }
@@ -515,7 +532,7 @@ function markTgSent_(id, source) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return {ok: false, error: "Система зайнята, спробуйте ще раз за секунду."};
   try {
-    var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+    var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
     if (!main) return {ok: false, error: "Аркуш «" + MAIN_SHEET + "» не знайдено."};
     var row = tgFindRow_(main, COL.ID, DATA_START, id);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено в таблиці."};
@@ -557,12 +574,19 @@ function markTgSent_(id, source) {
       main.getRange(row, TG_MAIN_STATUS).setNote(
         "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source + "\nОстаннє відкриття: " + stamp);
     } catch (err) { Logger.log("note: " + err); }
-    SpreadsheetApp.flush();
 
-    tgSyncToManager_(info.manager, id, vals);
     tgLogAppend_([new Date(), id, info.name, info.phone, info.region, info.manager,
                   info.link, source, repeat ? "повторно" : "вперше"]);
-    if (!repeat && res.row) tgBumpCounter_(res.row, stamp);
+
+    // Решту — файл менеджера і лічильник — робить tgFinishClick() уже
+    // після того, як менеджер побачив сторінку. Якщо браузер закриють
+    // раніше, ці дані донесе плановий tgRefreshJob (кожні 15 хв).
+    if (source === "кнопка в таблиці") {
+      info.deferred = {managerVals: vals, linkRow: (!repeat && res.row) ? res.row : 0, stamp: stamp};
+    } else {
+      tgSyncToManager_(info.manager, id, vals);
+      if (!repeat && res.row) tgBumpCounter_(res.row, stamp);
+    }
 
     return info;
   } catch (err) {
@@ -573,12 +597,31 @@ function markTgSent_(id, source) {
   }
 }
 
+// Викликається зі сторінки одразу після її показу: дописує статус у файл
+// менеджера і збільшує лічильник видач. Винесено з doGet, щоб сторінка
+// відкривалась швидше — це найповільніші дві операції (окремий файл).
+function tgFinishClick(id, token, managerVals, linkRow, stamp) {
+  try {
+    if (!id || token !== tgToken_(id)) return "bad-token";
+    var main = tgMainSheetCached_();
+    var row  = tgFindRow_(main, COL.ID, DATA_START, id);
+    if (row === -1) return "not-found";
+    var manager = tgStr_(main.getRange(row, COL.MANAGER).getValue());
+    if (managerVals && managerVals.length) tgSyncToManager_(manager, id, managerVals);
+    if (linkRow) tgBumpCounter_(linkRow, stamp || "");
+    return "ok";
+  } catch (err) {
+    Logger.log("tgFinishClick: " + err);
+    return "error";
+  }
+}
+
 // Скасування помилкового натискання
 function tgUndo_(id) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return {ok: false, error: "Система зайнята, спробуйте ще раз."};
   try {
-    var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+    var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
     var row  = tgFindRow_(main, COL.ID, DATA_START, id);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено."};
     var d = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
@@ -587,7 +630,6 @@ function tgUndo_(id) {
     // Нік і дату приєднання не чіпаємо: клієнт справді в каналі
     main.getRange(row, TG_MAIN_STATUS, 1, 2).setValues([["", ""]]);
     try { main.getRange(row, TG_MAIN_STATUS).clearNote(); } catch (err) { Logger.log("clearNote: " + err); }
-    SpreadsheetApp.flush();
     tgSyncToManager_(info.manager, id, ["", "", tgStr_(d[TG_MAIN_LINK - 1]),
                                         tgStr_(d[TG_MAIN_NICK - 1]), tgStr_(d[TG_MAIN_JOINED - 1])]);
     tgLogAppend_([new Date(), id, info.name, tgStr_(d[COL.PHONE - 1]), tgStr_(d[COL.REGION - 1]),
@@ -600,9 +642,9 @@ function tgUndo_(id) {
 function tgSyncToManager_(managerName, id, vals) {
   try {
     if (!managerName) return;
-    var m = getManagers()[managerName];
+    var m = tgManagers_()[managerName];
     if (!m || !m.fileId) return;
-    var sh = SpreadsheetApp.openById(m.fileId).getSheets()[0];
+    var sh = tgSS_(m.fileId).getSheets()[0];
     if (sh.getMaxColumns() < TG_MGR_JOINED) return;
     var row = tgFindRow_(sh, 1, TG_MGR_DATA_START, id);
     if (row === -1) return;
@@ -627,7 +669,7 @@ function tgFindRow_(sheet, idCol, startRow, id) {
 // ╚══════════════════════════════════════════════════════════╝
 
 function ensureTgLinksSheet_() {
-  var ss = SpreadsheetApp.openById(MAIN_FILE_ID);
+  var ss = tgSS_(MAIN_FILE_ID);
   var sh = ss.getSheetByName(TG_LINKS_SHEET);
   if (!sh) {
     sh = ss.insertSheet(TG_LINKS_SHEET);
@@ -665,7 +707,7 @@ function ensureTgLinksSheet_() {
 function tgLinksMap_() {
   var map = {};
   try {
-    var sh = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(TG_LINKS_SHEET);
+    var sh = tgSS_(MAIN_FILE_ID).getSheetByName(TG_LINKS_SHEET);
     if (!sh || sh.getLastRow() < 2) return map;
     var data = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
     for (var i = 0; i < data.length; i++) {
@@ -754,7 +796,7 @@ function tgLeadIdFromLinkName_(name) {
 
 function tgBumpCounter_(row, stamp) {
   try {
-    var sh = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(TG_LINKS_SHEET);
+    var sh = tgSS_(MAIN_FILE_ID).getSheetByName(TG_LINKS_SHEET);
     if (!sh || !row) return;
     var cur = sh.getRange(row, 4).getValue();
     sh.getRange(row, 4).setValue((parseInt(cur, 10) || 0) + 1);
@@ -786,7 +828,7 @@ function tgNormRegion_(s) {
 // ╚══════════════════════════════════════════════════════════╝
 
 function ensureTgLogSheet_() {
-  var ss = SpreadsheetApp.openById(MAIN_FILE_ID);
+  var ss = tgSS_(MAIN_FILE_ID);
   var sh = ss.getSheetByName(TG_LOG_SHEET);
   if (!sh) {
     sh = ss.insertSheet(TG_LOG_SHEET);
@@ -806,7 +848,7 @@ function tgLogAppend_(row) {
 
 // Відновлення статусів з логу (якщо колонки випадково затерли)
 function restoreTgStatusesFromLog() {
-  var ss  = SpreadsheetApp.openById(MAIN_FILE_ID);
+  var ss  = tgSS_(MAIN_FILE_ID);
   var log = ss.getSheetByName(TG_LOG_SHEET);
   if (!log || log.getLastRow() < 2) { Logger.log("Лог порожній"); return; }
   var rows = log.getRange(2, 1, log.getLastRow() - 1, 9).getValues();
@@ -861,7 +903,7 @@ function handleTgCommand(text, sender) {
       return;
     }
 
-    var main    = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+    var main    = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
     var lastRow = main.getLastRow();
     if (lastRow < DATA_START) { sendViber(sender.id, "У таблиці немає даних."); return; }
     var data = main.getRange(DATA_START, 1, lastRow - DATA_START + 1, COL.MANAGER).getValues();
@@ -903,7 +945,7 @@ function handleTgCommand(text, sender) {
 //   report += getTgStatsBlock_();
 function getTgStatsBlock_() {
   try {
-    var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+    var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
     if (!main || main.getMaxColumns() < TG_MAIN_LINK) return "";
     var lastRow = main.getLastRow();
     if (lastRow < DATA_START) return "";
@@ -1011,20 +1053,46 @@ function tgLandingBody_(r) {
            '📋 Скопіювати повідомлення</button>');
     h.push('</div>');
 
-    h.push('<div class="card"><div class="card-t">Написати клієнту</div><div class="grid">');
+    // Текст їде разом із переходом — копіювати руками не треба.
+    // WhatsApp відкриває чат саме з цим номером і одразу з текстом.
+    // Viber і Telegram такого не вміють: вони або відкривають чат за
+    // номером, або несуть текст — тож даємо і те, і те.
+    var msgEnc  = encodeURIComponent(msg);
+    var msgNoLn = encodeURIComponent(msg.split(r.link).join("").replace(/\n{3,}/g, "\n\n").trim());
+
+    h.push('<div class="card"><div class="card-t">Надіслати клієнту — з готовим текстом</div><div class="grid">');
+    h.push('<a class="btn btn-v" target="_blank" rel="noopener" href="viber://forward?text=' + msgEnc + '">Viber</a>');
+    h.push('<a class="btn btn-t" target="_blank" rel="noopener" href="https://t.me/share/url?url=' +
+           encodeURIComponent(r.link) + '&text=' + msgNoLn + '">Telegram</a>');
     if (intl) {
-      h.push('<a class="btn btn-v" target="_blank" rel="noopener" href="viber://chat?number=%2B' + intl + '">Viber</a>');
-      h.push('<a class="btn btn-t" target="_blank" rel="noopener" href="tg://resolve?phone=' + intl + '">Telegram</a>');
       h.push('<a class="btn btn-w" target="_blank" rel="noopener" href="https://wa.me/' + intl +
-             '?text=' + encodeURIComponent(msg) + '">WhatsApp</a>');
+             '?text=' + msgEnc + '">WhatsApp</a>');
     }
-    h.push('<a class="btn btn-g" target="_blank" rel="noopener" href="' + tgEsc_(r.link) + '">Відкрити канал</a>');
-    h.push('</div></div>');
+    h.push('</div><p class="note">Viber і Telegram відкриють список чатів — виберіть клієнта, ' +
+           'текст уже буде в повідомленні.' +
+           (intl ? ' WhatsApp відкриє чат саме з ' + tgEsc_(r.phone) + '.' : '') + '</p></div>');
+
+    if (intl) {
+      h.push('<div class="card"><div class="card-t">Або просто відкрити чат клієнта</div><div class="grid">');
+      h.push('<a class="btn btn-g" target="_blank" rel="noopener" href="viber://chat?number=%2B' + intl +
+             '">Viber ' + tgEsc_(r.phone) + '</a>');
+      h.push('<a class="btn btn-g" target="_blank" rel="noopener" href="tg://resolve?phone=' + intl +
+             '">Telegram ' + tgEsc_(r.phone) + '</a>');
+      h.push('</div></div>');
+    }
   }
 
   h.push('<p class="hint">Статус, дата і саме посилання вже записані в головну таблицю ' +
          'і в таблицю менеджера. Натиснули помилково? ' +
          '<a href="' + tgEsc_(undo) + '">Скасувати статус</a>.</p>');
+
+  // Дописуємо файл менеджера вже після показу сторінки
+  if (r.deferred) {
+    h.push('<script>try{google.script.run.withFailureHandler(function(){})' +
+           '.tgFinishClick(' + tgJson_(r.id) + ',' + tgJson_(tgToken_(r.id)) + ',' +
+           tgJson_(r.deferred.managerVals) + ',' + (r.deferred.linkRow || 0) + ',' +
+           tgJson_(r.deferred.stamp) + ');}catch(e){}</script>');
+  }
   return h.join("");
 }
 
@@ -1174,14 +1242,23 @@ function tgEsc_(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// Для значення всередині HTML-атрибута (там сутності розкодовуються)
 function tgJs_(s) {
   return tgEsc_(JSON.stringify(s === null || s === undefined ? "" : s.toString()));
+}
+
+// Для значення всередині <script> — там HTML-сутності НЕ розкодовуються,
+// тому екрануємо не в HTML, а в JS: інакше «&quot;» зламав би код,
+// а «</script>» усередині тексту обірвав би блок.
+function tgJson_(v) {
+  return JSON.stringify(v === undefined ? null : v)
+    .replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
 }
 
 // Список статусів: колонка G аркуша «Довідники» або TG_STATUS_LIST
 function getTgStatusList_() {
   try {
-    var ref = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName("Довідники");
+    var ref = tgSS_(MAIN_FILE_ID).getSheetByName("Довідники");
     if (ref && ref.getLastRow() >= 2 && ref.getMaxColumns() >= TG_DICT_COL) {
       var list = ref.getRange(2, TG_DICT_COL, ref.getLastRow() - 1, 1).getValues().flat().filter(String);
       if (list.length) return list;
@@ -1198,7 +1275,7 @@ function tgStatusRule_() {
 }
 
 function ensureTgStatusDictionary_() {
-  var ref = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName("Довідники");
+  var ref = tgSS_(MAIN_FILE_ID).getSheetByName("Довідники");
   if (!ref) { Logger.log("Аркуш «Довідники» не знайдено — пропускаю"); return; }
   if (ref.getMaxColumns() < TG_DICT_COL) ref.insertColumnsAfter(ref.getMaxColumns(), TG_DICT_COL - ref.getMaxColumns());
   if (!ref.getRange(1, TG_DICT_COL).getValue()) {
@@ -1260,7 +1337,7 @@ function testTgSetup() {
   out.push(dep.ok ? "✅ За адресою кнопок відповідає новий код (деплой оновлено)"
                   : "❌ Деплой: " + dep.why);
 
-  var main = SpreadsheetApp.openById(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+  var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
   if (!main || main.getMaxColumns() < TG_MAIN_LINK) {
     out.push("Колонки головної: ❌ не встановлені — запустіть installTgColumns()");
   } else {
@@ -1268,11 +1345,11 @@ function testTgSetup() {
     out.push("Колонки головної: " + (hdr[0] === TG_HDR_BTN ? "✅ " + hdr.join(" | ") : "❌ не встановлені"));
   }
 
-  var managers = getManagers();
+  var managers = tgManagers_();
   for (var name in managers) {
     if (!managers[name].fileId) continue;
     try {
-      var sh = SpreadsheetApp.openById(managers[name].fileId).getSheets()[0];
+      var sh = tgSS_(managers[name].fileId).getSheets()[0];
       var h  = sh.getRange(tgHeaderRow_(sh), TG_MGR_BTN).getValue();
       out.push((h === TG_HDR_BTN ? "✅ " : "❌ ") + name);
     } catch (err) { out.push("❌ " + name + ": " + err); }
