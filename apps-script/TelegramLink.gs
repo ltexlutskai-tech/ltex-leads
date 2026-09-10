@@ -483,6 +483,11 @@ function tgRefreshAll_(force) {
           }
           rec.status = rec.vals[0];
           main.getRange(rec.row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([rec.vals]);
+          try {
+            main.getRange(rec.row, TG_MAIN_STATUS).setNote(
+              "Джерело: підтягнуто з файлу менеджера (" + name + ")\nКоли: " +
+              Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm"));
+          } catch (e2) { Logger.log("refresh note: " + e2); }
           up++;
         } else if (rMain > rMgr) {
           // у менеджера статус «молодший» (найчастіше порожній) → опускаємо з головної
@@ -625,7 +630,7 @@ function handleTgJson_(p) {
     } else if (tgStr_(p.t) !== tgToken_(id)) {
       out = {ok: false, error: "Посилання застаріле або пошкоджене. Запустіть refreshTgButtonsForce()."};
     } else if (p.fin === "1") {
-      out = {ok: true, fin: tgFinishFromPage_(id, p.r, p.lr, p.stamp, p.nw === "1")};
+      out = {ok: true, fin: tgFinishFromPage_(id, p.r, p.lr, p.stamp)};
     } else if (p.undo === "1") {
       var u = tgUndo_(id);
       out = u.ok ? {ok: true, undo: true, name: u.name, id: u.id} : {ok: false, error: u.error};
@@ -668,7 +673,7 @@ function tgJsonPayload_(r) {
 }
 
 // Друга частина роботи — коли сторінка вже перед очима менеджера
-function tgFinishFromPage_(id, hintRow, linkRow, stamp, first) {
+function tgFinishFromPage_(id, hintRow, linkRow, stamp) {
   try {
     var sheet = tgSheetForId_(id);
     var row   = tgFindRow_(sheet, COL.ID, DATA_START, id, hintRow);
@@ -680,7 +685,6 @@ function tgFinishFromPage_(id, hintRow, linkRow, stamp, first) {
                 tgStr_(d[TG_MAIN_JOINED - 1])];
     var manager = tgStr_(d[COL.MANAGER - 1]);
 
-    tgLogFromRow_(d, id, first);
     tgSyncToManager_(manager, id, vals);
     try {
       sheet.getRange(row, TG_MAIN_STATUS).setNote(
@@ -777,19 +781,19 @@ function markTgSent_(id, source, hintRow) {
     var note = "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source +
                "\nОстаннє відкриття: " + stamp;
 
-    // Дозапис у лог — не в критичному шляху: сторінка його не показує, а
-    // звіт читає лог значно пізніше. Для кнопки це робить друга частина.
-    var logRow = [new Date(), id, info.name, info.phone, info.region, info.manager,
-                  info.link, source, repeat ? "повторно" : "вперше"];
-    if (source !== "кнопка в таблиці") { tgLogAppend_(logRow); lap("лог"); }
+    // Лог пишемо тут, а не в другій частині: другу частину виконує вже
+    // браузер, і вона може не відбутись — менеджер тисне «Viber», сторінка
+    // йде в месенджер і запит гине. Звіт мусить бачити всі надсилання.
+    tgLogAppend_([new Date(), id, info.name, info.phone, info.region, info.manager,
+                  info.link, source, repeat ? "повторно" : "вперше"]);
+    lap("лог");
 
     // Решту — файл менеджера і лічильник — робить tgFinishClick() уже
     // після того, як менеджер побачив сторінку. Якщо браузер закриють
     // раніше, ці дані донесе плановий tgRefreshJob (кожні 15 хв).
     if (source === "кнопка в таблиці") {
       info.deferred = {managerVals: vals, linkRow: (!repeat && res.row) ? res.row : 0,
-                       stamp: stamp, twinId: info.twinId, row: row, note: note,
-                       logRow: logRow};
+                       stamp: stamp, twinId: info.twinId, row: row, note: note};
     } else {
       try { main.getRange(row, TG_MAIN_STATUS).setNote(note); } catch (err) { Logger.log("note: " + err); }
       tgSyncToManager_(info.manager, id, vals);
@@ -808,24 +812,14 @@ function markTgSent_(id, source, hintRow) {
 // Викликається зі сторінки одразу після її показу: дописує статус у файл
 // менеджера і збільшує лічильник видач. Винесено з doGet, щоб сторінка
 // відкривалась швидше — це найповільніші дві операції (окремий файл).
-// Рядок у лог із уже прочитаних значень — щоб не читати таблицю вдруге
-function tgLogFromRow_(d, id, first) {
-  tgLogAppend_([new Date(), id, tgStr_(d[COL.NAME - 1]), tgStr_(d[COL.PHONE - 1]),
-                tgStr_(d[COL.REGION - 1]), tgStr_(d[COL.MANAGER - 1]),
-                tgStr_(d[TG_MAIN_LINK - 1]), "кнопка в таблиці",
-                first ? "вперше" : "повторно"]);
-}
-
-function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId, hintRow, note, first) {
+function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId, hintRow, note) {
   try {
     if (!id || token !== tgToken_(id)) return "bad-token";
     var main = tgSheetForId_(id);
     var row  = tgFindRow_(main, COL.ID, DATA_START, id, hintRow);
     if (row === -1) return "not-found";
     if (note) { try { main.getRange(row, TG_MAIN_STATUS).setNote(note); } catch (e) { Logger.log("note: " + e); } }
-    var d = main.getRange(row, 1, 1, TG_MAIN_LINK).getValues()[0];
-    tgLogFromRow_(d, id, first);
-    var manager = tgStr_(d[COL.MANAGER - 1]);
+    var manager = tgStr_(main.getRange(row, COL.MANAGER).getValue());
     if (managerVals && managerVals.length) tgSyncToManager_(manager, id, managerVals);
     if (linkRow) tgBumpCounter_(linkRow, stamp || "");
     if (twinId && managerVals && typeof tg1CMirrorTwin_ === "function") {
@@ -1414,8 +1408,7 @@ function tgLandingBody_(r) {
            '.tgFinishClick(' + tgJson_(r.id) + ',' + tgJson_(tgToken_(r.id)) + ',' +
            tgJson_(r.deferred.managerVals) + ',' + (r.deferred.linkRow || 0) + ',' +
            tgJson_(r.deferred.stamp) + ',' + tgJson_(r.deferred.twinId || "") + ',' +
-           (r.deferred.row || 0) + ',' + tgJson_(r.deferred.note || "") + ',' +
-           (r.repeat ? 0 : 1) + ');}catch(e){}</script>');
+           (r.deferred.row || 0) + ',' + tgJson_(r.deferred.note || "") + ');}catch(e){}</script>');
   }
   return h.join("");
 }
@@ -1697,14 +1690,21 @@ function tgWhoMarked(dateText) {
       var dt = tgDateStr_(tg[i][1]);
       if (want && dt.indexOf(want) !== 0) continue;
 
-      var m   = /Джерело:\s*([^\n]+)/.exec(tgStr_(notes[i][0]));
-      var src = m ? m[1].trim() : "без примітки — статус поставила не кнопка";
+      var m    = /Джерело:\s*([^\n]+)/.exec(tgStr_(notes[i][0]));
+      var link = tgStr_(tg[i][2]);
+      // Примітка при перенесенні значень не копіюється. Але посилання в
+      // рядку могло взятись лише з реального відкриття сторінки — своєї
+      // або парного рядка. Тож рядок без примітки, але з посиланням — це
+      // теж клік, просто зафіксований в іншому місці.
+      var src = m ? m[1].trim()
+                  : (link ? "без примітки, але посилання видане — перенесено з парного рядка чи файлу менеджера"
+                          : "без примітки й без посилання — вписано вручну або стара вада");
       sources[src] = (sources[src] || 0) + 1;
       total++;
       if (sample.length < 15) {
         sample.push("   рядок " + (DATA_START + i) + " · " + tgStr_(ids[i][0]) + " · " +
                     (tgStr_(mgr[i][0]) || "—") + " · " + (dt || "без дати") +
-                    " · посилання: " + (tgStr_(tg[i][2]) ? "є" : "НЕМА") + " · " + src);
+                    " · посилання: " + (link ? "є" : "НЕМА") + " · " + src);
       }
     }
   });
@@ -1723,10 +1723,12 @@ function tgWhoMarked(dateText) {
       if (!want || tgDateStr_(rows[r][0]).indexOf(want) === 0) inLog++;
     }
   }
-  out.push("Записів у лозі «" + TG_LOG_SHEET + "» за цей час: " + inLog);
-  if (total > inLog) {
+  out.push("Записів у лозі «" + TG_LOG_SHEET + "» " +
+           (want ? "за цей час: " : "усього: ") + inLog +
+           " (лог рахує кожне відкриття сторінки, тож повторні теж)");
+  if (want && total > inLog) {
     out.push("⚠️ Позначок більше, ніж записів у лозі на " + (total - inLog) +
-             ". Стільки статусів поставила не кнопка.");
+             ". Стільки статусів зʼявилось повз кнопку.");
   }
 
   Logger.log(out.join("\n"));

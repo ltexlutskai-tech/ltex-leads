@@ -604,6 +604,13 @@ function tg1CMirrorTwin_(twinId, vals) {
     var row = tgFindRow_(sheet, COL.ID, DATA_START, twinId);
     if (row === -1) return;
     sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+    // Примітка не копіюється разом зі значеннями, тож пишемо свою — інакше
+    // рядок виглядає як статус нізвідки (див. tgWhoMarked)
+    try {
+      sheet.getRange(row, TG_MAIN_STATUS).setNote(
+        "Джерело: перенесено з парного рядка (той самий клієнт в іншій базі)\n" +
+        "Коли: " + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm"));
+    } catch (err) { Logger.log("tg1CMirrorTwin_ note: " + err); }
     var manager = tgStr_(sheet.getRange(row, COL.MANAGER).getValue());
     tgSyncToManager_(manager, twinId, vals);
     Logger.log("tg1CMirrorTwin_: " + twinId + " ← той самий клієнт");
