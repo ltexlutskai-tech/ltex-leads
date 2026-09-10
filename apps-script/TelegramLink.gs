@@ -71,6 +71,27 @@ function tgSS_(fileId) {
 function tgMainSheetCached_() {
   return tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
 }
+
+// ID «1C-4741» → клієнт із бази 1С, «LTEX-…» → лід.
+// Обидва листи мають однаковий набір колонок, тож далі код спільний.
+// Перевірки typeof — щоб усе працювало і без файлу Telegram1C.gs.
+function tgIs1C_(id) {
+  return typeof TG1C_PREFIX === "string" && tgStr_(id).indexOf(TG1C_PREFIX) === 0;
+}
+function tg1CSheetName_() {
+  return typeof TG1C_SHEET === "string" ? TG1C_SHEET : "";
+}
+function tgSheetForId_(id) {
+  if (tgIs1C_(id)) {
+    var sh = tgSS_(MAIN_FILE_ID).getSheetByName(tg1CSheetName_());
+    if (sh) return sh;
+  }
+  return tgMainSheetCached_();
+}
+function tgMgrSheetForId_(fileId, id) {
+  var ss = tgSS_(fileId);
+  return tgIs1C_(id) ? ss.getSheetByName(tg1CSheetName_()) : ss.getSheets()[0];
+}
 function tgManagers_() {
   if (!TG_MGR_CACHE_) TG_MGR_CACHE_ = getManagers();
   return TG_MGR_CACHE_;
@@ -115,14 +136,8 @@ var TG_MSG_DEFAULT =
 // Безпечно запускати повторно: нічого не дублює і не затирає.
 // Запускати ще раз треба після додавання НОВОГО менеджера.
 function installTgColumns() {
-  var t0    = Date.now();
-  var props = PropertiesService.getScriptProperties();
-  var done  = {};
-  try { done = JSON.parse(props.getProperty("TG_INSTALL_DONE") || "{}"); } catch (err) { done = {}; }
-
-  // 1) Складаємо повний список кроків
-  var steps  = [];
   var report = [];
+  var steps  = [];
   function add(key, title, fn) { steps.push({key: key, title: title, fn: fn}); }
 
   add("sheets", "Аркуші «" + TG_LINKS_SHEET + "», «" + TG_LOG_SHEET + "» і довідник статусів", function () {
@@ -155,34 +170,44 @@ function installTgColumns() {
     add("btn." + names[j], "Кнопки: " + names[j], tgButtonsMgrStep_(fid));
   }
 
-  // 2) Виконуємо, поки є час. Ліміт Apps Script — 6 хв, бюджет — 4 хв.
+  var res = tgRunSteps_("TG_INSTALL_DONE", steps, report);
+  Logger.log(report.join("\n"));
+  if (res.left > 0) {
+    Logger.log("\n⏳ Не встигли за один запуск (ліміт Apps Script — 6 хв).\n" +
+               "   Запустіть installTgColumns() ЩЕ РАЗ — продовжить з місця зупинки.\n" +
+               "   Лишилось кроків: " + res.left + " із " + res.total);
+  } else {
+    Logger.log("\n🎉 Колонки й кнопки готові (" + res.total + " кроків).\n" +
+               "   Далі: 1) бот і Script Properties  2) Deploy → New version\n" +
+               "         3) setTelegramWebhook()  4) setupTgTrigger()  5) testTgSetup()");
+  }
+  return report.join("\n");
+}
+
+// Виконує список кроків із бюджетом часу і памʼяттю про зроблене.
+// Повторний запуск продовжує з місця зупинки — так обходимо ліміт 6 хвилин.
+function tgRunSteps_(progressKey, steps, report) {
+  var t0    = Date.now();
+  var props = PropertiesService.getScriptProperties();
+  var done  = {};
+  try { done = JSON.parse(props.getProperty(progressKey) || "{}"); } catch (err) { done = {}; }
+
   var left = 0;
-  for (var k = 0; k < steps.length; k++) {
-    var st = steps[k];
+  for (var i = 0; i < steps.length; i++) {
+    var st = steps[i];
     if (done[st.key]) continue;
     if (Date.now() - t0 > TG_TIME_BUDGET) { left++; continue; }
     var s0 = Date.now();
     try {
       st.fn();
       done[st.key] = true;
-      props.setProperty("TG_INSTALL_DONE", JSON.stringify(done));
+      props.setProperty(progressKey, JSON.stringify(done));
       report.push("✅ " + st.title + "  (" + ((Date.now() - s0) / 1000).toFixed(1) + " с)");
     } catch (err) {
       report.push("❌ " + st.title + ": " + err);
     }
   }
-
-  Logger.log(report.join("\n"));
-  if (left > 0) {
-    Logger.log("\n⏳ Не встигли за один запуск (ліміт Apps Script — 6 хв).\n" +
-               "   Запустіть installTgColumns() ЩЕ РАЗ — продовжить з місця зупинки.\n" +
-               "   Лишилось кроків: " + left + " із " + steps.length);
-  } else {
-    Logger.log("\n🎉 Колонки й кнопки готові (" + steps.length + " кроків).\n" +
-               "   Далі: 1) бот і Script Properties  2) Deploy → New version\n" +
-               "         3) setTelegramWebhook()  4) setupTgTrigger()  5) testTgSetup()");
-  }
-  return report.join("\n");
+  return {left: left, total: steps.length};
 }
 
 function tgMainSheet_() {
@@ -532,8 +557,8 @@ function markTgSent_(id, source) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return {ok: false, error: "Система зайнята, спробуйте ще раз за секунду."};
   try {
-    var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
-    if (!main) return {ok: false, error: "Аркуш «" + MAIN_SHEET + "» не знайдено."};
+    var main = tgSheetForId_(id);
+    if (!main) return {ok: false, error: "Аркуш для " + id + " не знайдено."};
     var row = tgFindRow_(main, COL.ID, DATA_START, id);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено в таблиці."};
 
@@ -554,6 +579,13 @@ function markTgSent_(id, source) {
     var repeat     = tgIsSent_(prevStatus);
     info.nick      = tgStr_(d[TG_MAIN_NICK - 1]);     // якщо клієнт уже приєднався
     info.joinedAt  = tgStr_(d[TG_MAIN_JOINED - 1]);
+
+    // Той самий клієнт може бути і лідом, і карткою 1С — тоді посилання
+    // в них одне: беремо вже видане з будь-якого з двох рядків.
+    info.twinId = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(main, row) : "";
+    if (!prevLink && info.twinId && typeof tg1CTwinLink_ === "function") {
+      prevLink = tg1CTwinLink_(info.twinId);
+    }
 
     // Посилання: вже видане раніше → віддаємо те саме (клієнт має на руках саме його)
     var res = tgResolveLink_(info, prevLink);
@@ -582,10 +614,12 @@ function markTgSent_(id, source) {
     // після того, як менеджер побачив сторінку. Якщо браузер закриють
     // раніше, ці дані донесе плановий tgRefreshJob (кожні 15 хв).
     if (source === "кнопка в таблиці") {
-      info.deferred = {managerVals: vals, linkRow: (!repeat && res.row) ? res.row : 0, stamp: stamp};
+      info.deferred = {managerVals: vals, linkRow: (!repeat && res.row) ? res.row : 0,
+                       stamp: stamp, twinId: info.twinId};
     } else {
       tgSyncToManager_(info.manager, id, vals);
       if (!repeat && res.row) tgBumpCounter_(res.row, stamp);
+      if (info.twinId && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(info.twinId, vals);
     }
 
     return info;
@@ -600,15 +634,18 @@ function markTgSent_(id, source) {
 // Викликається зі сторінки одразу після її показу: дописує статус у файл
 // менеджера і збільшує лічильник видач. Винесено з doGet, щоб сторінка
 // відкривалась швидше — це найповільніші дві операції (окремий файл).
-function tgFinishClick(id, token, managerVals, linkRow, stamp) {
+function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId) {
   try {
     if (!id || token !== tgToken_(id)) return "bad-token";
-    var main = tgMainSheetCached_();
+    var main = tgSheetForId_(id);
     var row  = tgFindRow_(main, COL.ID, DATA_START, id);
     if (row === -1) return "not-found";
     var manager = tgStr_(main.getRange(row, COL.MANAGER).getValue());
     if (managerVals && managerVals.length) tgSyncToManager_(manager, id, managerVals);
     if (linkRow) tgBumpCounter_(linkRow, stamp || "");
+    if (twinId && managerVals && typeof tg1CMirrorTwin_ === "function") {
+      tg1CMirrorTwin_(twinId, managerVals);
+    }
     return "ok";
   } catch (err) {
     Logger.log("tgFinishClick: " + err);
@@ -621,7 +658,7 @@ function tgUndo_(id) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return {ok: false, error: "Система зайнята, спробуйте ще раз."};
   try {
-    var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+    var main = tgSheetForId_(id);
     var row  = tgFindRow_(main, COL.ID, DATA_START, id);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено."};
     var d = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
@@ -630,8 +667,11 @@ function tgUndo_(id) {
     // Нік і дату приєднання не чіпаємо: клієнт справді в каналі
     main.getRange(row, TG_MAIN_STATUS, 1, 2).setValues([["", ""]]);
     try { main.getRange(row, TG_MAIN_STATUS).clearNote(); } catch (err) { Logger.log("clearNote: " + err); }
-    tgSyncToManager_(info.manager, id, ["", "", tgStr_(d[TG_MAIN_LINK - 1]),
-                                        tgStr_(d[TG_MAIN_NICK - 1]), tgStr_(d[TG_MAIN_JOINED - 1])]);
+    var undoVals = ["", "", tgStr_(d[TG_MAIN_LINK - 1]),
+                    tgStr_(d[TG_MAIN_NICK - 1]), tgStr_(d[TG_MAIN_JOINED - 1])];
+    tgSyncToManager_(info.manager, id, undoVals);
+    var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(main, row) : "";
+    if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, undoVals);
     tgLogAppend_([new Date(), id, info.name, tgStr_(d[COL.PHONE - 1]), tgStr_(d[COL.REGION - 1]),
                   info.manager, "", "скасування", "скасовано"]);
     return info;
@@ -644,8 +684,8 @@ function tgSyncToManager_(managerName, id, vals) {
     if (!managerName) return;
     var m = tgManagers_()[managerName];
     if (!m || !m.fileId) return;
-    var sh = tgSS_(m.fileId).getSheets()[0];
-    if (sh.getMaxColumns() < TG_MGR_JOINED) return;
+    var sh = tgMgrSheetForId_(m.fileId, id);
+    if (!sh || sh.getMaxColumns() < TG_MGR_JOINED) return;
     var row = tgFindRow_(sh, 1, TG_MGR_DATA_START, id);
     if (row === -1) return;
     while (vals.length < TG_BLOCK) vals.push("");
@@ -791,7 +831,7 @@ function tgLeadIdFromLinkName_(name) {
   var n = tgStr_(name);
   if (!n) return "";
   var first = n.split(/\s+/)[0];
-  return /^LTEX-/i.test(first) ? first : "";
+  return /^(LTEX-|1C-)/i.test(first) ? first : "";
 }
 
 function tgBumpCounter_(row, stamp) {
@@ -1091,7 +1131,7 @@ function tgLandingBody_(r) {
     h.push('<script>try{google.script.run.withFailureHandler(function(){})' +
            '.tgFinishClick(' + tgJson_(r.id) + ',' + tgJson_(tgToken_(r.id)) + ',' +
            tgJson_(r.deferred.managerVals) + ',' + (r.deferred.linkRow || 0) + ',' +
-           tgJson_(r.deferred.stamp) + ');}catch(e){}</script>');
+           tgJson_(r.deferred.stamp) + ',' + tgJson_(r.deferred.twinId || "") + ');}catch(e){}</script>');
   }
   return h.join("");
 }

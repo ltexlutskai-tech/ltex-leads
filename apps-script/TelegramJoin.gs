@@ -169,12 +169,12 @@ function tgRecordJoin_(user, link, chat, kind) {
     var linkName  = tgStr_(link.name);
     var stamp     = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
 
-    var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
-    if (!main) return;
-    var row = tgFindRowByLink_(main, inviteUrl, linkName);
+    var found = tgFindRowByLink_(inviteUrl, linkName);
+    var main  = found.sheet;
+    var row   = found.row;
 
     // Прийшов не за персональним посиланням (напр. за посиланням області)
-    if (row === -1) {
+    if (row === -1 || !main) {
       tgLogAppend_([new Date(), "", "", "", "", "", inviteUrl, kind,
                     "не привʼязано до ліда · " + nick + (linkName ? " · «" + linkName + "»" : "")]);
       Logger.log("TG: " + nick + " приєднався за посиланням «" + (linkName || inviteUrl) + "» — ліда не знайдено");
@@ -211,6 +211,8 @@ function tgRecordJoin_(user, link, chat, kind) {
     if (!tgStr_(d[COL.TG - 1])) main.getRange(row, COL.TG).setValue(nick);
 
     tgSyncToManager_(manager, id, vals);
+    var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(main, row) : "";
+    if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, vals);
     tgLogAppend_([new Date(), id, name, phone, region, manager, vals[2], kind,
                   "приєднався: " + nick + (wasNick && wasNick !== nick ? " (було " + wasNick + ")" : "")]);
 
@@ -237,24 +239,36 @@ function tgRecordJoin_(user, link, chat, kind) {
   }
 }
 
-// Пошук рядка: спершу за точним URL посилання, далі за ID у його назві
-function tgFindRowByLink_(main, inviteUrl, linkName) {
-  var lastRow = main.getLastRow();
-  if (lastRow < DATA_START) return -1;
-  var n = lastRow - DATA_START + 1;
+// Пошук рядка: спершу за точним URL посилання, далі за ID у його назві.
+// Шукаємо і серед лідів, і серед клієнтів 1С.
+function tgFindRowByLink_(inviteUrl, linkName) {
+  var sheets = [tgMainSheetCached_()];
+  var reg = tg1CSheetName_() ? tgSS_(MAIN_FILE_ID).getSheetByName(tg1CSheetName_()) : null;
+  if (reg) sheets.push(reg);
 
-  if (inviteUrl) {
-    var links = main.getRange(DATA_START, TG_MAIN_LINK, n, 1).getValues();
-    for (var i = 0; i < n; i++) {
-      if (tgStr_(links[i][0]) === inviteUrl) return DATA_START + i;
+  for (var s = 0; s < sheets.length; s++) {
+    var sh = sheets[s];
+    if (!sh) continue;
+    var lastRow = sh.getLastRow();
+    if (lastRow < DATA_START) continue;
+    if (inviteUrl) {
+      var n = lastRow - DATA_START + 1;
+      var links = sh.getRange(DATA_START, TG_MAIN_LINK, n, 1).getValues();
+      for (var i = 0; i < n; i++) {
+        if (tgStr_(links[i][0]) === inviteUrl) return {sheet: sh, row: DATA_START + i};
+      }
     }
   }
+
   var id = tgLeadIdFromLinkName_(linkName);
   if (id) {
-    var row = tgFindRow_(main, COL.ID, DATA_START, id);
-    if (row !== -1) return row;
+    var target = tgSheetForId_(id);
+    if (target) {
+      var r = tgFindRow_(target, COL.ID, DATA_START, id);
+      if (r !== -1) return {sheet: target, row: r};
+    }
   }
-  return -1;
+  return {sheet: null, row: -1};
 }
 
 // «@ivan_petrov» або «Іван Петров (id 123456789)», якщо ніку немає
@@ -302,7 +316,17 @@ function handleNickCommand(text, sender) {
 
 // Пошук в обидва боки: за ніком (@ivan) або за номером телефону
 function findLeadByTgNick(query) {
-  var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
+  var sheets = [tgMainSheetCached_()];
+  var reg = tg1CSheetName_() ? tgSS_(MAIN_FILE_ID).getSheetByName(tg1CSheetName_()) : null;
+  if (reg) sheets.push(reg);
+  for (var s = 0; s < sheets.length; s++) {
+    var hit = tgFindByNickInSheet_(sheets[s], query);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function tgFindByNickInSheet_(main, query) {
   if (!main || main.getMaxColumns() < TG_MAIN_JOINED) return null;
   var lastRow = main.getLastRow();
   if (lastRow < DATA_START) return null;
