@@ -161,12 +161,17 @@ function jsonp(q) {
   });
 }
 
+// keepalive: запит доживає, навіть якщо сторінка вже пішла в месенджер.
+// Без цього друга частина роботи (примітка, файл менеджера, лічильник)
+// губилась щоразу, коли менеджер одразу тиснув «Viber».
 function api(params) {
   var q = "?a=tg&fmt=json&id=" + encodeURIComponent(Q.id || "") + "&t=" + encodeURIComponent(Q.t || "");
   if (Q.r) q += "&r=" + encodeURIComponent(Q.r);
   for (var k in params) q += "&" + k + "=" + encodeURIComponent(params[k]);
   if (useJsonp) return jsonp(q);
-  return fetch(API + q).then(function (res) { return res.json(); })
+  var opt = {};
+  try { opt = {keepalive: true}; } catch (e) { opt = {}; }
+  return fetch(API + q, opt).then(function (res) { return res.json(); })
     .catch(function () { useJsonp = true; return jsonp(q); });
 }
 
@@ -215,22 +220,43 @@ function copyBtn(btn, text) {
 }
 
 // ── Перехід у месенджер: текст у буфер, потім діалог ─────────
+var pending = null;   // друга частина роботи; не йдемо, поки не дійде
+
 function go(url, text) {
   var n = $("go-note");
   function open(copied) {
     if (n) n.textContent = copied
       ? "✅ Текст скопійовано — у чаті натисніть «Вставити»"
       : "⚠️ Текст не скопіювався — натисніть «Скопіювати повідомлення» вище";
-    setTimeout(function () { window.location.href = url; }, 120);
+    // Перехід у месенджер вивантажує сторінку. Даємо другій частині
+    // дійти — але не більш ніж 700 мс, щоб менеджер не чекав.
+    var goNow = function () { window.location.href = url; };
+    var timer = setTimeout(goNow, 700);
+    if (pending && pending.then) {
+      pending.then(function () { clearTimeout(timer); setTimeout(goNow, 60); },
+                   function () { clearTimeout(timer); setTimeout(goNow, 60); });
+    } else {
+      clearTimeout(timer);
+      setTimeout(goNow, 120);
+    }
   }
+  // Обіцянка від буфера обміну може не відповісти взагалі (немає дозволу,
+  // вікно не в фокусі). Тоді менеджер тисне «Viber» — і нічого не
+  // відбувається. Тому чекаємо на неї не довше пів секунди.
+  var done = false;
+  function once(copied) { if (done) return; done = true; open(copied); }
+  var guard = setTimeout(function () { once(copyQuiet(text)); }, 500);
+
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () { open(true); },
-                                               function () { open(copyQuiet(text)); });
+      navigator.clipboard.writeText(text).then(
+        function () { clearTimeout(guard); once(true); },
+        function () { clearTimeout(guard); once(copyQuiet(text)); });
       return false;
     }
   } catch (e) {}
-  open(copyQuiet(text));
+  clearTimeout(guard);
+  once(copyQuiet(text));
   return false;
 }
 
@@ -360,7 +386,7 @@ if (!Q.id || !Q.t) {
     // Друга частина роботи — коли сторінка вже перед очима. Якщо статус не
     // ставився, доробляти нічого.
     if (!d.notSent) {
-      api({fin: 1, lr: d.linkRow || 0, stamp: d.stamp || "", nw: d.repeat ? 0 : 1})
+      pending = api({fin: 1, lr: d.linkRow || 0, stamp: d.stamp || ""})
         .catch(function () {});
     }
   }, function () {
