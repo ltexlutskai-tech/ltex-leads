@@ -260,11 +260,15 @@ function tgRecordJoin_(user, link, chat, kind) {
 
     // Прийшов не за персональним посиланням (напр. за посиланням області)
     if (row === -1 || !main) {
-      var oblast = tgRegionByLink_(inviteUrl);
+      var oblast  = tgRegionByLink_(inviteUrl);
+      // Telegram каже, хто створив посилання. Якщо це не наш бот — посилання
+      // зробили руками в налаштуваннях каналу (реклама, візитка тощо).
+      var creator = link.creator ? tgUserLabel_(link.creator) : "";
       tgLogAppend_([new Date(), "", "", "", oblast, "", inviteUrl, kind,
                     "не привʼязано до ліда · " + nick +
                     (oblast ? " · посилання області «" + oblast + "»" : "") +
-                    (linkName ? " · «" + linkName + "»" : "")]);
+                    (linkName ? " · «" + linkName + "»" : "") +
+                    (creator ? " · створив: " + creator : "")]);
       Logger.log("TG: " + nick + " приєднався за посиланням «" + (linkName || inviteUrl) +
                  "»" + (oblast ? " (область " + oblast + ")" : "") + " — ліда не знайдено");
       return;
@@ -637,15 +641,18 @@ function tgWhyNotMatched(limit) {
   if (!log || log.getLastRow() < 2) { Logger.log("Лог порожній"); return "Лог порожній"; }
 
   var rows = log.getRange(2, 1, log.getLastRow() - 1, 9).getValues();
-  var byLink = {}, noLink = 0, total = 0, people = {};
+  var byLink = {}, byCreator = {}, noLink = 0, total = 0, people = {};
   for (var i = 0; i < rows.length; i++) {
     if (tgStr_(rows[i][8]).toLowerCase().indexOf("не привʼязано") !== 0) continue;
     total++;
+    var note = tgStr_(rows[i][8]);
     var link = tgStr_(rows[i][6]);
-    var who  = tgStr_(rows[i][8]).split("·")[1] || "";
+    var who  = note.split("·")[1] || "";
     people[who.trim()] = true;
     if (!link) { noLink++; continue; }
     byLink[link] = (byLink[link] || 0) + 1;
+    var cr = /створив:\s*([^·]+)/.exec(note);
+    if (cr) byCreator[link] = cr[1].trim();
   }
 
   // Які посилання взагалі є в таблицях
@@ -679,9 +686,15 @@ function tgWhyNotMatched(limit) {
       mark = "  ← є в рядку клієнта (мало привʼязатись — напишіть мені)";
     } else {
       var obl = tgRegionByLink_(links[k]);
-      mark = obl ? "  ← посилання області «" + obl + "»: спільне для багатьох, " +
-                   "конкретного клієнта за ним не впізнати"
-                 : "  ← невідоме посилання (створене не нами або вже відкликане)";
+      if (obl) {
+        mark = "  ← посилання області «" + obl + "»: спільне для багатьох, " +
+               "конкретного клієнта за ним не впізнати";
+      } else {
+        mark = "  ← не наше посилання" +
+               (byCreator[links[k]] ? " · створив " + byCreator[links[k]] : "") +
+               ": зроблене руками в налаштуваннях каналу (реклама, візитка) " +
+               "або вже відкликане";
+      }
     }
     out.push("   " + byLink[links[k]] + "× " + links[k] + mark);
   }
