@@ -617,6 +617,97 @@ function handleMembersCommand(text, sender) {
 // ╔══════════════════════════════════════════════════════════╗
 // ║  6. ПЕРЕВІРКА НАЛАШТУВАНЬ БОТА                           ║
 // ╚══════════════════════════════════════════════════════════╝
+// ╔══════════════════════════════════════════════════════════╗
+// ║  ДІАГНОСТИКА ОДНИМ ФАЙЛОМ                                ║
+// ╚══════════════════════════════════════════════════════════╝
+// Збирає всі перевірки в один текстовий файл на Диску. Зручно, коли
+// розбиратись має хтось, хто не сидить у редакторі: не треба копіювати
+// журнал руками — досить дати доступ до файлу.
+//
+// Секрети у файл не потрапляють: для токенів пишеться лише «задано».
+var TG_DIAG_PREFIX = "LTEX_TG_діагностика_";
+
+function tgDiagToDrive() {
+  var tz    = Session.getScriptTimeZone();
+  var stamp = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd_HH-mm");
+  var out   = ["L-TEX · діагностика Telegram-розсилки",
+               "Час: " + Utilities.formatDate(new Date(), tz, "dd.MM.yyyy HH:mm:ss") +
+               " (пояс скрипта: " + tz + ")", ""];
+
+  function block(title, fn) {
+    out.push("════════════════════════════════════════");
+    out.push(title);
+    out.push("════════════════════════════════════════");
+    try { out.push(String(fn())); } catch (err) { out.push("❌ " + err); }
+    out.push("");
+  }
+
+  block("НАЛАШТУВАННЯ", function () {
+    return typeof testTgSetup === "function" ? testTgSetup() : "немає TelegramLink.gs";
+  });
+  block("БОТ І КАНАЛ", function () {
+    return typeof testTelegramBot === "function" ? testTelegramBot() : "немає функції";
+  });
+  block("ШЛЯХ ВСТУПУ В КАНАЛ", function () { return testTgJoinPath(); });
+  block("ЧЕРГА ОНОВЛЕНЬ", function () { return tgPeekUpdates(); });
+  block("НЕВПІЗНАНІ ВСТУПИ", function () { return tgWhyNotMatched(10); });
+
+  block("ТРИГЕРИ", function () {
+    var t = ScriptApp.getProjectTriggers().map(function (x) {
+      return "   " + x.getHandlerFunction() + " · " + x.getEventType();
+    });
+    return t.length ? t.join("\n") : "   жодного";
+  });
+
+  block("ВЛАСТИВОСТІ СКРИПТА", function () {
+    var props = PropertiesService.getScriptProperties().getProperties() || {};
+    var secret = /TOKEN|SECRET|KEY/i;
+    var keys = Object.keys(props).sort(), res = [];
+    for (var i = 0; i < keys.length; i++) {
+      var v = String(props[keys[i]] || "");
+      res.push("   " + keys[i] + " = " +
+               (secret.test(keys[i]) ? (v ? "задано (" + v.length + " симв.)" : "ПОРОЖНЄ")
+                                     : (v.length > 90 ? v.substring(0, 90) + "…" : v)));
+    }
+    return res.length ? res.join("\n") : "   порожньо";
+  });
+
+  block("ЧАСОВІ ПОЯСИ", function () {
+    var res = ["   скрипт: " + tz];
+    try { res.push("   головна таблиця: " + tgSS_(MAIN_FILE_ID).getSpreadsheetTimeZone()); }
+    catch (err) { res.push("   головна таблиця: ? " + err); }
+    var mgrs = tgManagers_();
+    for (var name in mgrs) {
+      if (!mgrs[name].fileId) continue;
+      try { res.push("   " + name + ": " + tgSS_(mgrs[name].fileId).getSpreadsheetTimeZone()); }
+      catch (err2) { res.push("   " + name + ": ? " + err2); }
+    }
+    return res.join("\n");
+  });
+
+  var text = out.join("\n");
+  var file = DriveApp.createFile(TG_DIAG_PREFIX + stamp + ".txt", text, MimeType.PLAIN_TEXT);
+  Logger.log("✅ Діагностику збережено на Диск: " + file.getName() +
+             "\n   " + file.getUrl() +
+             "\n   Розмір: " + text.length + " символів");
+  return file.getUrl();
+}
+
+// Прибрати старі файли діагностики (лишає N найсвіжіших)
+function tgDiagCleanup(keep) {
+  var n = parseInt(keep, 10) || 3;
+  var files = [], it = DriveApp.getFiles();
+  while (it.hasNext()) {
+    var f = it.next();
+    if (f.getName().indexOf(TG_DIAG_PREFIX) === 0) files.push(f);
+  }
+  files.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  var removed = 0;
+  for (var i = n; i < files.length; i++) { files[i].setTrashed(true); removed++; }
+  Logger.log("Файлів діагностики: " + files.length + ", прибрано в кошик: " + removed);
+}
+
+
 // Що зараз чекає на нас у Telegram. Дивимось, не забираючи: offset не
 // зсуваємо, тож планове опитування опрацює ці оновлення як звичайно.
 // Потрібно, коли перейшли за посиланням, а в таблиці тиша: видно, чи
