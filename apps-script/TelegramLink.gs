@@ -774,8 +774,14 @@ function markTgSent_(id, source, hintRow) {
     // звіті буде «надіслано» там, де менеджер нічого не надіслав.
     if (!info.link && !repeat) { info.notSent = true; info.ms = T.join(" "); return info; }
 
-    var vals = [repeat ? prevStatus : TG_STATUS_SENT, info.sentAt,
-                info.link || prevLink, info.nick, info.joinedAt];
+    // Дату й дату приєднання при повторі повертаємо В ТОМУ САМОМУ ВИГЛЯДІ,
+    // як лежали в клітинці. Якщо там справжня дата, а часовий пояс таблиці
+    // не збігається з поясом скрипта, прочитаний і записаний назад рядок
+    // щоразу зсувався б на різницю поясів — і дата «тікала» б у майбутнє.
+    var vals = [repeat ? prevStatus : TG_STATUS_SENT,
+                repeat ? d[TG_MAIN_DATE - 1] : stamp,
+                info.link || prevLink,
+                d[TG_MAIN_NICK - 1], d[TG_MAIN_JOINED - 1]];
     main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
     lap("статус");
     var note = "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source +

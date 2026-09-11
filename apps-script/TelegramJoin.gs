@@ -686,11 +686,25 @@ function tgDiagToDrive() {
   });
 
   var text = out.join("\n");
-  var file = DriveApp.createFile(TG_DIAG_PREFIX + stamp + ".txt", text, MimeType.PLAIN_TEXT);
-  Logger.log("✅ Діагностику збережено на Диск: " + file.getName() +
-             "\n   " + file.getUrl() +
+  var name = TG_DIAG_PREFIX + stamp;
+
+  // Google-документ, а не .txt: такий файл відкривається й читається
+  // всюди однаково, зокрема інструментами, які працюють з Диском.
+  var url = "";
+  try {
+    var doc = DocumentApp.create(name);
+    doc.getBody().setText(text);
+    doc.saveAndClose();
+    url = doc.getUrl();
+  } catch (err) {
+    Logger.log("DocumentApp: " + err + " — зберігаю текстовим файлом");
+    var file = DriveApp.createFile(name + ".txt", text, MimeType.PLAIN_TEXT);
+    url = file.getUrl();
+  }
+  Logger.log("✅ Діагностику збережено на Диск: " + name +
+             "\n   " + url +
              "\n   Розмір: " + text.length + " символів");
-  return file.getUrl();
+  return url;
 }
 
 // Прибрати старі файли діагностики (лишає N найсвіжіших)
@@ -850,6 +864,15 @@ function testTgJoinPath() {
   var out = ["🔎 ШЛЯХ «КЛІЄНТ ВСТУПИВ → ТАБЛИЦЯ → ЗВІТ»", ""];
   var props = PropertiesService.getScriptProperties();
 
+  // 0. У якому режимі працюємо
+  var polling = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === "tgPollJob";
+  }).length > 0;
+  out.push(polling
+    ? "✅ Режим: опитування — раз на хвилину забираємо оновлення самі (вебхук не потрібен)"
+    : "Режим: вебхук — Telegram сам стукає до нас");
+  out.push("");
+
   // 1. Вебхук
   var wh = tgApi_("getWebhookInfo", {});
   var want = getTgTrackUrl_() + "?tghook=" + tgHookSecret_();
@@ -857,7 +880,9 @@ function testTgJoinPath() {
     out.push("❌ Не вдалось запитати стан вебхука: " + tgExplainTgError_(wh.description));
   } else {
     var w = wh.result || {};
-    out.push((w.url ? "✅" : "❌") + " Вебхук: " + (w.url || "не встановлено — запустіть setTelegramWebhook()"));
+    out.push(w.url ? "✅ Вебхук: " + w.url
+                   : (polling ? "ℹ️ Вебхук знято — так і має бути при опитуванні"
+                              : "❌ Вебхук: не встановлено — запустіть setTelegramWebhook()"));
     if (w.url && w.url !== want) {
       out.push("   ⚠️ Адреса не та, що зараз у проєкті. Запустіть setTelegramWebhook() ще раз.");
     }
@@ -871,7 +896,7 @@ function testTgJoinPath() {
     if (allowed) out.push("   Типи подій: " + allowed);
   }
 
-  // 2. Чи доходить POST до нашого коду (найчастіший обрив)
+  // 2. Чи доходить POST до нашого коду (найчастіший обрив при вебхуку)
   var before = tgStr_(props.getProperty("TG_PROBE_AT"));
   try {
     UrlFetchApp.fetch(want, {
@@ -882,6 +907,9 @@ function testTgJoinPath() {
   var after = tgStr_(PropertiesService.getScriptProperties().getProperty("TG_PROBE_AT"));
   if (after && after !== before) {
     out.push("✅ Оновлення доходять до коду (пробний запит прийнято " + after + ")");
+  } else if (polling) {
+    out.push("ℹ️ Пробний запит не дійшов, але при опитуванні це не критично: " +
+             "оновлення ми забираємо самі, а не приймаємо POST-ом.");
   } else {
     out.push("❌ Пробний запит НЕ дійшов до handleTelegramUpdate.");
     out.push("   Найімовірніше, у Code.gs у функції doPost немає рядка:");
