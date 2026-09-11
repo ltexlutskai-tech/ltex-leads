@@ -260,9 +260,13 @@ function tgRecordJoin_(user, link, chat, kind) {
 
     // Прийшов не за персональним посиланням (напр. за посиланням області)
     if (row === -1 || !main) {
-      tgLogAppend_([new Date(), "", "", "", "", "", inviteUrl, kind,
-                    "не привʼязано до ліда · " + nick + (linkName ? " · «" + linkName + "»" : "")]);
-      Logger.log("TG: " + nick + " приєднався за посиланням «" + (linkName || inviteUrl) + "» — ліда не знайдено");
+      var oblast = tgRegionByLink_(inviteUrl);
+      tgLogAppend_([new Date(), "", "", "", oblast, "", inviteUrl, kind,
+                    "не привʼязано до ліда · " + nick +
+                    (oblast ? " · посилання області «" + oblast + "»" : "") +
+                    (linkName ? " · «" + linkName + "»" : "")]);
+      Logger.log("TG: " + nick + " приєднався за посиланням «" + (linkName || inviteUrl) +
+                 "»" + (oblast ? " (область " + oblast + ")" : "") + " — ліда не знайдено");
       return;
     }
 
@@ -614,6 +618,17 @@ function handleMembersCommand(text, sender) {
 //   порожнє посилання — людина зайшла через головне посилання каналу
 //   (реклама, пошук, переслали): бот не має за чим її впізнати;
 //   посилання є, але його немає в таблиці — видали не ми або рядок чистили.
+// Посилання з аркуша «🔗 TG-посилання» — спільне для цілої області, тож за
+// ним не впізнати конкретного клієнта. Але область — знати корисно.
+function tgRegionByLink_(inviteUrl) {
+  if (!inviteUrl) return "";
+  try {
+    var map = tgLinksMap_();
+    for (var k in map) { if (map[k].link && map[k].link === inviteUrl) return k; }
+  } catch (err) { Logger.log("tgRegionByLink_: " + err); }
+  return "";
+}
+
 function tgWhyNotMatched(limit) {
   var max = parseInt(limit, 10) || 15;
   var ss  = tgSS_(MAIN_FILE_ID);
@@ -659,8 +674,16 @@ function tgWhyNotMatched(limit) {
   out.push("Вступів за конкретним посиланням: " + (total - noLink) +
            " (різних посилань: " + links.length + ")");
   for (var k = 0; k < Math.min(links.length, max); k++) {
-    out.push("   " + byLink[links[k]] + "× " + links[k] +
-             (known[links[k]] ? "  ← є в таблиці (мало привʼязатись!)" : "  ← у таблиці такого немає"));
+    var mark;
+    if (known[links[k]]) {
+      mark = "  ← є в рядку клієнта (мало привʼязатись — напишіть мені)";
+    } else {
+      var obl = tgRegionByLink_(links[k]);
+      mark = obl ? "  ← посилання області «" + obl + "»: спільне для багатьох, " +
+                   "конкретного клієнта за ним не впізнати"
+                 : "  ← невідоме посилання (створене не нами або вже відкликане)";
+    }
+    out.push("   " + byLink[links[k]] + "× " + links[k] + mark);
   }
   if (links.length > max) out.push("   … і ще " + (links.length - max));
 
