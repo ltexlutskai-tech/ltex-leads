@@ -688,23 +688,21 @@ function tgDiagToDrive() {
   var text = out.join("\n");
   var name = TG_DIAG_PREFIX + stamp;
 
-  // Google-документ, а не .txt: такий файл відкривається й читається
-  // всюди однаково, зокрема інструментами, які працюють з Диском.
-  var url = "";
-  try {
-    var doc = DocumentApp.create(name);
-    doc.getBody().setText(text);
-    doc.saveAndClose();
-    url = doc.getUrl();
-  } catch (err) {
-    Logger.log("DocumentApp: " + err + " — зберігаю текстовим файлом");
-    var file = DriveApp.createFile(name + ".txt", text, MimeType.PLAIN_TEXT);
-    url = file.getUrl();
-  }
+  // Зберігаємо таблицею, а не документом чи .txt. Причини прозаїчні:
+  // DocumentApp вимагає окремого дозволу, якого в проєкті немає, а
+  // текстовий файл через DriveApp виходив порожнім. SpreadsheetApp уже
+  // дозволений — ним і користуємось.
+  var ss = SpreadsheetApp.create(name);
+  var sh = ss.getSheets()[0];
+  var rows = out.map(function (line) { return [line]; });
+  sh.getRange(1, 1, rows.length, 1).setValues(rows);
+  sh.setColumnWidth(1, 900);
+  SpreadsheetApp.flush();
+
   Logger.log("✅ Діагностику збережено на Диск: " + name +
-             "\n   " + url +
-             "\n   Розмір: " + text.length + " символів");
-  return url;
+             "\n   " + ss.getUrl() +
+             "\n   Рядків: " + rows.length + " · символів: " + text.length);
+  return ss.getUrl();
 }
 
 // Прибрати старі файли діагностики (лишає N найсвіжіших)

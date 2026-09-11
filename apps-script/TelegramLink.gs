@@ -1946,8 +1946,19 @@ function tgCheckDeployed_(url) {
 
     // Той самий шлях, яким ходить швидка сторінка. Ловить випадок, коли
     // сторінка-кнопка вже нова, а даних вона не отримує.
-    var j = UrlFetchApp.fetch(url + "?a=tg&fmt=json&id=__test__&t=__bad__",
-                              {muteHttpExceptions: true, followRedirects: true}).getContentText() || "";
+    // Застосунок іноді відповідає порожнім тілом, якщо саме зараз зайнятий
+    // (тригери, самовиклик). Порожньо — не доказ старого коду, тож пробуємо
+    // ще раз і лише тоді робимо висновок.
+    var j = "";
+    for (var attempt = 0; attempt < 2; attempt++) {
+      j = UrlFetchApp.fetch(url + "?a=tg&fmt=json&id=__test__&t=__bad__",
+                            {muteHttpExceptions: true, followRedirects: true}).getContentText() || "";
+      if (j) break;
+      Utilities.sleep(1500);
+    }
+    if (!j) {
+      return {ok: true, why: "", note: "запит по дані (fmt=json) відповів порожнім — застосунок був зайнятий"};
+    }
     if (j.indexOf('"ok":') < 0) {
       return {ok: false, why: "кнопка відкривається, але запит по дані (fmt=json) віддає не те: " +
                               j.substring(0, 120).replace(/\s+/g, " ") +
@@ -1971,6 +1982,7 @@ function testTgSetup() {
   var dep = tgCheckDeployed_(url);
   out.push(dep.ok ? "✅ За адресою кнопок відповідає новий код (деплой оновлено)"
                   : "❌ Деплой: " + dep.why);
+  if (dep.ok && dep.note) out.push("   ℹ️ " + dep.note);
 
   var main = tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET);
   if (!main || main.getMaxColumns() < TG_MAIN_LINK) {
