@@ -156,7 +156,7 @@ function tgCollectStats_(period) {
           ? Utilities.formatDate(from, tz, "dd.MM.yyyy")
           : Utilities.formatDate(from, tz, "dd.MM") + "–" +
             Utilities.formatDate(new Date(to.getTime() - 86400000), tz, "dd.MM.yyyy")),
-    sent: 0, repeat: 0, joined: 0, sentLead: 0, sent1C: 0,
+    sent: 0, repeat: 0, joined: 0, orphan: 0, sentLead: 0, sent1C: 0,
     byManager: {}, byRegion: {}, byManagerRegion: {},
     coverage: null, leftByManager: {}
   };
@@ -189,6 +189,9 @@ function tgCollectStats_(period) {
         st.repeat++; st.byManager[mgr].repeat++;
       } else if (note.indexOf("приєднався") === 0) {
         st.joined++; st.byManager[mgr].joined++; st.byRegion[region].joined++;
+      } else if (note.indexOf("не привʼязано") === 0) {
+        // вступив, але за посиланням, якого немає в таблиці
+        st.orphan++;
       }
     }
   }
@@ -245,6 +248,10 @@ function buildTgWorkReport_(period, detailed) {
   head += "👤 Приєднались до каналу: " + st.joined + "\n";
   if (st.sent) {
     head += "   конверсія: " + Math.round(st.joined * 100 / st.sent) + "%\n";
+  }
+  if (st.orphan) {
+    head += "❓ Вступили, але не впізнані: " + st.orphan + "\n" +
+            "   прийшли не за персональним посиланням\n";
   }
   parts.push(head);
 

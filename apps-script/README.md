@@ -141,8 +141,9 @@ setupTgTrigger()       // кожні 15 хв: кнопки новим лідам
 
 ### 9. Перевірка
 ```
-testTgSetup()          // колонки, посилання, тригер
+testTgSetup()          // колонки, посилання, тригер, швидка сторінка
 testTelegramBot()      // бот, права в каналі, вебхук, режим посилань
+testTgJoinPath()       // чи доходять вступи в канал до таблиці
 testTgPersonalLink()   // створює тестове запрошення і одразу відкликає
 ```
 Далі — натисніть кнопку в будь-якому рядку і перейдіть за посиланням
@@ -523,6 +524,7 @@ var correctHeaders=[..., HDR_NEW_STATUS, HDR_NEW_COMMENT,
 | `setTelegramWebhook()` | увімкнути приймання вступів у канал |
 | `deleteTelegramWebhook()` / `getTelegramWebhookInfo()` | зняти / подивитись стан вебхука |
 | `findLeadByTgNick("@ivan")` | нік → клієнт і телефон (і навпаки) |
+| `testTgJoinPath()` | наскрізна перевірка: Telegram → doPost → таблиця → звіт |
 | `testTgSetup()` · `testTelegramBot()` · `testTgPersonalLink()` | діагностика |
 | `sendTgReport()` | звіт у Viber власникам |
 | `restoreTgStatusesFromLog()` | відновити статуси з логу |
@@ -532,6 +534,18 @@ var correctHeaders=[..., HDR_NEW_STATUS, HDR_NEW_COMMENT,
 ---
 
 ## Питання, які виникають
+
+**Вступи є, а у звіті нуль.** Запустіть `testTgJoinPath()`. Вона надсилає на
+адресу вебхука пробне оновлення й перевіряє, чи воно дійшло до коду. Якщо ні —
+у `Code.gs` у `doPost` немає рядка передачі оновлень:
+
+```js
+if (data && data.update_id) return handleTelegramUpdate(data, e);
+```
+
+Він має стояти одразу після `var data = ...`. Цей рядок легко втратити,
+перевставляючи `Code.gs` — а без нього Telegram стукає в застосунок, застосунок
+відповідає «ок», і повідомлення про вступ нікуди не потрапляє.
 
 **Нік не зʼявився після переходу.** Перевірте `testTelegramBot()`: бот має бути
 адміністратором каналу з правом «Запрошувати користувачів», вебхук —

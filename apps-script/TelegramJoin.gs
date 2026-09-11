@@ -114,6 +114,14 @@ function handleTelegramUpdate(data, e) {
     var given = (e && e.parameter && e.parameter.tghook) ? e.parameter.tghook.toString() : "";
     if (given !== tgHookSecret_()) { Logger.log("TG hook: невірний секрет — запит проігноровано"); return tgOk_(); }
 
+    // Перевірка звʼязку (testTgJoinPath): якщо цей рядок спрацював, отже
+    // doPost у Code.gs справді передає оновлення сюди й секрет збігається
+    if (data.tgprobe) {
+      PropertiesService.getScriptProperties().setProperty("TG_PROBE_AT",
+        Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm:ss"));
+      return tgOk_();
+    }
+
     // Дедуплікація: Telegram повторює доставку, поки не отримає 200
     var cache = CacheService.getScriptCache();
     var key = "tgu_" + data.update_id;
@@ -524,6 +532,104 @@ function handleMembersCommand(text, sender) {
 // ╔══════════════════════════════════════════════════════════╗
 // ║  6. ПЕРЕВІРКА НАЛАШТУВАНЬ БОТА                           ║
 // ╚══════════════════════════════════════════════════════════╝
+// Чому окремо від testTelegramBot: той перевіряє бота й канал з боку
+// Telegram. А тут головне питання інше — чи доходить повідомлення про
+// вступ до НАШОГО коду. Між Telegram і таблицею стоїть doPost у Code.gs,
+// і саме там найчастіше обрив: рядок передачі оновлень легко втратити,
+// перевставляючи файл.
+function testTgJoinPath() {
+  var out = ["🔎 ШЛЯХ «КЛІЄНТ ВСТУПИВ → ТАБЛИЦЯ → ЗВІТ»", ""];
+  var props = PropertiesService.getScriptProperties();
+
+  // 1. Вебхук
+  var wh = tgApi_("getWebhookInfo", {});
+  var want = getTgTrackUrl_() + "?tghook=" + tgHookSecret_();
+  if (!wh.ok) {
+    out.push("❌ Не вдалось запитати стан вебхука: " + tgExplainTgError_(wh.description));
+  } else {
+    var w = wh.result || {};
+    out.push((w.url ? "✅" : "❌") + " Вебхук: " + (w.url || "не встановлено — запустіть setTelegramWebhook()"));
+    if (w.url && w.url !== want) {
+      out.push("   ⚠️ Адреса не та, що зараз у проєкті. Запустіть setTelegramWebhook() ще раз.");
+    }
+    if (w.pending_update_count) out.push("   ⏳ У черзі невручених: " + w.pending_update_count);
+    if (w.last_error_message) {
+      out.push("   ❌ Остання помилка доставки: " + w.last_error_message +
+               (w.last_error_date ? " (" + Utilities.formatDate(new Date(w.last_error_date * 1000),
+                Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm") + ")" : ""));
+    }
+    var allowed = (w.allowed_updates || []).join(", ");
+    if (allowed) out.push("   Типи подій: " + allowed);
+  }
+
+  // 2. Чи доходить POST до нашого коду (найчастіший обрив)
+  var before = tgStr_(props.getProperty("TG_PROBE_AT"));
+  try {
+    UrlFetchApp.fetch(want, {
+      method: "post", contentType: "application/json", muteHttpExceptions: true,
+      payload: JSON.stringify({update_id: Date.now(), tgprobe: true})
+    });
+  } catch (err) { out.push("   ⚠️ Не вдалось надіслати пробний запит: " + err); }
+  var after = tgStr_(PropertiesService.getScriptProperties().getProperty("TG_PROBE_AT"));
+  if (after && after !== before) {
+    out.push("✅ Оновлення доходять до коду (пробний запит прийнято " + after + ")");
+  } else {
+    out.push("❌ Пробний запит НЕ дійшов до handleTelegramUpdate.");
+    out.push("   Найімовірніше, у Code.gs у функції doPost немає рядка:");
+    out.push("   if (data && data.update_id) return handleTelegramUpdate(data, e);");
+    out.push("   Він має стояти одразу після рядка з var data = ...");
+    out.push("   Додайте його, зробіть Розгорнути → Нова версія і запустіть цю перевірку ще раз.");
+  }
+
+  // 3. Режим посилань
+  var mode = (tgProp_("TG_LINK_MODE") || "request").toLowerCase();
+  out.push("Режим посилань: " + mode +
+           (mode === "request" ? " (бот бачить кожну заявку — нік буде завжди)"
+                               : mode === "personal" ? " (вступ одразу; потрібен тип події chat_member)"
+                                                     : " ⚠️ персональні посилання вимкнено"));
+
+  // 4. Що зараз у таблицях і в лозі
+  var ss = tgSS_(MAIN_FILE_ID);
+  var names = [MAIN_SHEET];
+  if (typeof TG1C_SHEET === "string" && ss.getSheetByName(TG1C_SHEET)) names.push(TG1C_SHEET);
+  var withLink = 0, withNick = 0;
+  names.forEach(function (nm) {
+    var sh = ss.getSheetByName(nm);
+    if (!sh || sh.getMaxColumns() < TG_MAIN_NICK) return;
+    var n = sh.getLastRow() - DATA_START + 1;
+    if (n < 1) return;
+    var v = sh.getRange(DATA_START, TG_MAIN_LINK, n, 2).getValues();
+    for (var i = 0; i < n; i++) {
+      if (tgStr_(v[i][0])) withLink++;
+      if (tgStr_(v[i][1])) withNick++;
+    }
+  });
+  out.push("Рядків із виданим посиланням: " + withLink + " · із ніком клієнта: " + withNick);
+
+  var log = ss.getSheetByName(TG_LOG_SHEET), joined = 0, orphan = 0;
+  if (log && log.getLastRow() > 1) {
+    var rows = log.getRange(2, 9, log.getLastRow() - 1, 1).getValues();
+    for (var r = 0; r < rows.length; r++) {
+      var note = tgStr_(rows[r][0]).toLowerCase();
+      if (note.indexOf("приєднався") === 0) joined++;
+      else if (note.indexOf("не привʼязано") === 0) orphan++;
+    }
+  }
+  out.push("У лозі: вступів з упізнаним клієнтом — " + joined + ", невпізнаних — " + orphan);
+  if (!joined && orphan) {
+    out.push("   ⚠️ Люди вступають, але за посиланнями, яких немає в таблиці " +
+             "(загальне посилання області або переслане). У звіті такі не рахуються.");
+  }
+  if (!joined && !orphan) {
+    out.push("   ℹ️ Жодного вступу ще не зафіксовано. Перевірте вживу: відкрийте кнопку " +
+             "на тестовому клієнті й перейдіть за посиланням зі свого Telegram.");
+  }
+
+  Logger.log(out.join("\n"));
+  return out.join("\n");
+}
+
+
 function testTelegramBot() {
   var out = [];
   if (!tgBotToken_()) {
