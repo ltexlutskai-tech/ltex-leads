@@ -662,7 +662,7 @@ function tgJsonPayload_(r) {
   return {
     ok: true, id: r.id, name: r.name, phone: r.phone, intl: tgIntlPhone_(r.phone),
     region: r.region, city: r.city, manager: r.manager, interest: r.interest,
-    link: r.link, personal: !!r.personal, noLink: !!r.noLink,
+    link: r.link, personal: !!r.personal, noLink: !!r.noLink, viaBot: !!r.viaBot,
     linkWhy: r.linkWhy || "", notSent: !!r.notSent,
     repeat: !!r.repeat, sentAt: r.sentAt, nick: r.nick || "", joinedAt: r.joinedAt || "",
     absent: tgNoAppsFrom_(r.comment), msg: tgMessageText_(r), ms: r.ms || "",
@@ -758,6 +758,7 @@ function markTgSent_(id, source, hintRow) {
     info.link      = res.link;
     info.linkRow   = res.row;
     info.personal  = !!res.personal;
+    info.viaBot    = !!res.viaBot;
     info.noLink    = !res.link;
     info.repeat    = repeat;
     info.source    = source;
@@ -1015,7 +1016,45 @@ function tgLinksMap_() {
 // Головна функція вибору посилання для клієнта.
 // existing — посилання, яке цей клієнт уже отримав раніше: тоді нове
 // не видаємо (клієнт має на руках старе), лише визначаємо його тип.
+// Публічний канал відкривається напряму, тож запрошення в ньому не
+// «спрацьовує»: у події про вступ посилання немає, і хто саме прийшов —
+// невідомо. Тому клієнту даємо посилання на нашого бота з міткою:
+// натиснувши «Почати», він сам себе називає, а бот уже веде в канал.
+//
+// TG_CLIENT_LINK: "bot" (типово) — посилання на бота з міткою
+//                 "invite"       — як раніше, пряме запрошення в канал
+function tgClientLinkMode_() {
+  var m = (tgProp_("TG_CLIENT_LINK") || "bot").toLowerCase();
+  return m === "invite" ? "invite" : "bot";
+}
+
+// Імʼя бота питаємо один раз і памʼятаємо: воно не змінюється.
+function tgBotUsername_() {
+  var u = tgProp_("TG_BOT_USERNAME");
+  if (u) return u;
+  try {
+    var me = tgApi_("getMe", {});
+    if (me.ok && me.result && me.result.username) {
+      tgSetProp_("TG_BOT_USERNAME", me.result.username);
+      return me.result.username;
+    }
+  } catch (err) { Logger.log("tgBotUsername_: " + err); }
+  return "";
+}
+
+function tgBotDeepLink_(id) {
+  var user = tgBotUsername_();
+  return user ? "https://t.me/" + user + "?start=" + encodeURIComponent(tgStr_(id)) : "";
+}
+
 function tgResolveLink_(info, existing) {
+  // Режим бота: жодних звернень до Telegram при кліку — посилання
+  // збирається з імені бота та ID клієнта, тож сторінка відкривається швидше.
+  if (tgClientLinkMode_() === "bot") {
+    var deep = tgBotDeepLink_(info.id);
+    if (deep) return {link: deep, row: 0, key: tgNormRegion_(info.region), personal: true, viaBot: true};
+    info.linkWhy = "не вдалось дізнатись імʼя бота — перевірте TG_BOT_TOKEN";
+  }
   var map  = tgLinksMap_();
   var key  = tgNormRegion_(info.region);
   var rec  = key ? map[key] : null;
@@ -1343,8 +1382,9 @@ function tgLandingBody_(r) {
            "» в аркуш «" + TG_LINKS_SHEET + "» головної таблиці")) + '</p></div>');
   } else {
     h.push('<div class="card"><div class="card-t">' +
-           (r.personal ? 'Персональне посилання цього клієнта'
-                       : 'Унікальне посилання для області «' + tgEsc_(r.region || "за замовчуванням") + '»') +
+           (r.viaBot ? 'Персональне посилання клієнта (відкриє нашого бота)'
+                     : r.personal ? 'Персональне посилання цього клієнта'
+                                  : 'Унікальне посилання для області «' + tgEsc_(r.region || "за замовчуванням") + '»') +
            '</div>');
     h.push('<div class="link" id="lnk">' + tgEsc_(r.link) + '</div>');
     if (r.personal && !r.nick) {

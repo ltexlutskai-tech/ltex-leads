@@ -35,7 +35,12 @@ function tgBotToken_() {
 // Типи подій, які нам потрібні. Список мусить бути в КОЖНОМУ виклику
 // getUpdates і setWebhook: Telegram запамʼятовує останній переданий, а
 // типовий список НЕ містить chat_member — і вступи в канал зникають.
-var TG_UPDATE_TYPES = ["chat_join_request", "chat_member", "my_chat_member"];
+// "message" тут обовʼязково: саме ним приходить /start з міткою клієнта.
+var TG_UPDATE_TYPES = ["message", "chat_join_request", "chat_member", "my_chat_member"];
+
+// Хто є хто: Telegram-id ↔ клієнт. Потрібно, щоб упізнати людину при
+// вступі в публічний канал, де в події немає посилання.
+var TG_USERS_SHEET = "_tg_users";
 
 function tgApi_(method, payload) {
   var token = tgBotToken_();
@@ -162,7 +167,8 @@ function tgAlreadySeen_(updateId) {
 }
 
 function tgHandleUpdateObject_(u) {
-  if (u.chat_join_request)   tgOnJoinRequest_(u.chat_join_request);
+  if (u.message)             tgOnMessage_(u.message);
+  else if (u.chat_join_request) tgOnJoinRequest_(u.chat_join_request);
   else if (u.chat_member)    tgOnChatMember_(u.chat_member);
   else if (u.my_chat_member) Logger.log("TG my_chat_member: " + JSON.stringify(u.my_chat_member).substring(0, 300));
 }
@@ -223,6 +229,150 @@ function tgPollJob() {
 }
 
 
+// ── Клієнт відкрив бота за нашим посиланням ──────────────
+// Посилання виду https://t.me/бот?start=LTEX-…: у момент натискання
+// «Почати» ми дізнаємось і нік, і Telegram-id — ще до вступу в канал.
+function tgOnMessage_(msg) {
+  try {
+    var text = tgStr_(msg && msg.text);
+    if (text.indexOf("/start") !== 0) return;
+    var id   = tgStr_(text.substring(6)).replace(/^[\s=]+/, "");
+    var user = msg.from || {};
+    var nick = tgUserLabel_(user);
+    var chat = (msg.chat || {}).id;
+
+    if (!id) {
+      tgSend_(chat, "Вітаємо! Це бот L-TEX.\n\n" +
+        "Щоб ми могли вас упізнати, відкрийте посилання, яке надіслав менеджер.");
+      return;
+    }
+    tgRememberUser_(user, id);
+
+    var sheet = tgSheetForId_(id);
+    var row   = sheet ? tgFindRow_(sheet, COL.ID, DATA_START, id) : -1;
+    if (row === -1) {
+      Logger.log("/start: клієнта " + id + " немає в таблиці (" + nick + ")");
+      tgSend_(chat, "Вітаємо! Приєднуйтесь до нашого каналу:\n" + tgChannelLink_());
+      return;
+    }
+
+    var d       = sheet.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+    var name    = tgStr_(d[COL.NAME - 1]);
+    var phone   = tgStr_(d[COL.PHONE - 1]);
+    var manager = tgStr_(d[COL.MANAGER - 1]);
+    var stamp   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
+
+    // Нік уже відомий — записуємо, навіть якщо в канал ще не вступили
+    var vals = [tgStr_(d[TG_MAIN_STATUS - 1]) || TG_STATUS_SENT,
+                d[TG_MAIN_DATE - 1] || stamp,
+                tgStr_(d[TG_MAIN_LINK - 1]),
+                nick,
+                d[TG_MAIN_JOINED - 1]];
+    sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+    try {
+      sheet.getRange(row, TG_MAIN_NICK).setNote(
+        "Telegram id: " + (user.id || "—") +
+        "\nІмʼя в Telegram: " + [user.first_name, user.last_name].filter(String).join(" ") +
+        "\nВідкрив бота: " + stamp);
+    } catch (err) { Logger.log("/start note: " + err); }
+    if (!tgStr_(d[COL.TG - 1])) sheet.getRange(row, COL.TG).setValue(nick);
+
+    tgSyncToManager_(manager, id, vals);
+    var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(sheet, row) : "";
+    if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, vals);
+    tgLogAppend_([new Date(), id, name, phone, tgStr_(d[COL.REGION - 1]), manager,
+                  "", "бот /start", "відкрив бота: " + nick]);
+
+    tgSend_(chat,
+      "Вітаємо" + (name ? ", " + tgFirstName_(name) : "") + "! 👋\n\n" +
+      "Ви на крок від нашого каналу — там щодня нові надходження, ціни та акції.\n\n" +
+      "👉 " + tgChannelLink_());
+
+    try {
+      var mgr = manager ? tgManagers_()[manager] : null;
+      if (mgr && mgr.viberId) {
+        sendViber(mgr.viberId,
+          "👤 Клієнт відкрив бота L-TEX!\n\n" +
+          "Нік: " + nick + "\nПІБ: " + (name || "—") + "\nТелефон: " + (phone || "—") +
+          "\nID: " + id + "\nЧас: " + stamp);
+      }
+    } catch (err2) { Logger.log("/start viber: " + err2); }
+
+    Logger.log("/start: " + nick + " → " + id + " (" + name + ")");
+  } catch (err) { Logger.log("tgOnMessage_: " + err); }
+}
+
+function tgSend_(chatId, text) {
+  if (!chatId) return;
+  tgApi_("sendMessage", {chat_id: chatId, text: text, disable_web_page_preview: false});
+}
+
+// Посилання на канал, яке бот дає клієнту після «Почати»
+function tgChannelLink_() {
+  var saved = tgProp_("TG_CHANNEL_LINK");
+  if (saved) return saved;
+  try {
+    var chatId = (tgProp_("TG_CHAT_ID") || "").trim();
+    if (chatId) {
+      var r = tgApi_("getChat", {chat_id: chatId});
+      if (r.ok && r.result) {
+        var link = r.result.username ? "https://t.me/" + r.result.username
+                                     : tgStr_(r.result.invite_link);
+        if (link) { tgSetProp_("TG_CHANNEL_LINK", link); return link; }
+      }
+    }
+  } catch (err) { Logger.log("tgChannelLink_: " + err); }
+  return "";
+}
+
+// Реєстр «Telegram-id → клієнт». Саме він дозволяє впізнати людину при
+// вступі в публічний канал, де посилання в події немає.
+function tgUsersSheet_() {
+  var ss = tgSS_(MAIN_FILE_ID);
+  var sh = ss.getSheetByName(TG_USERS_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(TG_USERS_SHEET);
+    sh.getRange(1, 1, 1, 4).setValues([["Telegram id", "Нік", "ID клієнта", "Коли"]])
+      .setFontWeight("bold");
+    sh.setFrozenRows(1);
+    sh.hideSheet();
+  }
+  return sh;
+}
+
+function tgRememberUser_(user, clientId) {
+  try {
+    if (!user || !user.id) return;
+    var sh = tgUsersSheet_();
+    var last = sh.getLastRow();
+    var uid  = String(user.id);
+    if (last > 1) {
+      var ids = sh.getRange(2, 1, last - 1, 1).getValues();
+      for (var i = 0; i < ids.length; i++) {
+        if (String(ids[i][0]) === uid) {
+          sh.getRange(2 + i, 2, 1, 3).setValues([[tgUserLabel_(user), clientId, new Date()]]);
+          return;
+        }
+      }
+    }
+    sh.appendRow([uid, tgUserLabel_(user), clientId, new Date()]);
+  } catch (err) { Logger.log("tgRememberUser_: " + err); }
+}
+
+function tgClientByUserId_(userId) {
+  try {
+    if (!userId) return "";
+    var sh = tgSS_(MAIN_FILE_ID).getSheetByName(TG_USERS_SHEET);
+    if (!sh || sh.getLastRow() < 2) return "";
+    var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+    var uid  = String(userId);
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]) === uid) return tgStr_(rows[i][2]);
+    }
+  } catch (err) { Logger.log("tgClientByUserId_: " + err); }
+  return "";
+}
+
 function tgOnJoinRequest_(req) {
   var chat = req.chat || {};
   var user = req.from || {};
@@ -259,6 +409,17 @@ function tgRecordJoin_(user, link, chat, kind) {
     var found = tgFindRowByLink_(inviteUrl, linkName);
     var main  = found.sheet;
     var row   = found.row;
+
+    // У публічному каналі посилання в події немає. Але якщо людина раніше
+    // відкривала бота за нашою міткою, ми знаємо її Telegram-id.
+    if (row === -1 && user && user.id) {
+      var byId = tgClientByUserId_(user.id);
+      if (byId) {
+        var sh2 = tgSheetForId_(byId);
+        var r2  = sh2 ? tgFindRow_(sh2, COL.ID, DATA_START, byId) : -1;
+        if (r2 !== -1) { main = sh2; row = r2; Logger.log("TG: упізнано за Telegram-id → " + byId); }
+      }
+    }
 
     // Прийшов не за персональним посиланням (напр. за посиланням області)
     if (row === -1 || !main) {
