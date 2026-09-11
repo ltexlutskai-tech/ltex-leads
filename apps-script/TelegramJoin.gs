@@ -617,6 +617,51 @@ function handleMembersCommand(text, sender) {
 // ╔══════════════════════════════════════════════════════════╗
 // ║  6. ПЕРЕВІРКА НАЛАШТУВАНЬ БОТА                           ║
 // ╚══════════════════════════════════════════════════════════╝
+// Що зараз чекає на нас у Telegram. Дивимось, не забираючи: offset не
+// зсуваємо, тож планове опитування опрацює ці оновлення як звичайно.
+// Потрібно, коли перейшли за посиланням, а в таблиці тиша: видно, чи
+// Telegram узагалі щось прислав.
+function tgPeekUpdates() {
+  var offset = parseInt(tgProp_("TG_POLL_OFFSET"), 10) || 0;
+  var r = tgApi_("getUpdates", {offset: offset, timeout: 0, limit: 20});
+  if (!r.ok) {
+    var why = tgExplainTgError_(r.description);
+    Logger.log("❌ " + why +
+      (String(r.description || "").indexOf("terminated by other") >= 0
+        ? "\n   Спершу зніміть вебхук: useTelegramPolling()" : ""));
+    return why;
+  }
+  var list = r.result || [];
+  var out  = ["📥 Оновлень у черзі: " + list.length +
+              (offset ? " (від номера " + offset + ")" : ""), ""];
+  if (!list.length) {
+    out.push("Порожньо. Якщо ви щойно переходили за посиланням — Telegram нічого не прислав.");
+    out.push("Найчастіші причини:");
+    out.push("   • ви вже учасник каналу — вступу не відбувається, отже й події немає;");
+    out.push("   • бот перестав бути адміністратором каналу (перевірте testTelegramBot());");
+    out.push("   • подію вже забрало планове опитування — тоді запис має бути в лозі.");
+  }
+  for (var i = 0; i < list.length; i++) {
+    var u = list[i], kind = "інше", who = "", link = "";
+    if (u.chat_join_request) {
+      kind = "заявка на вступ";
+      who  = tgUserLabel_(u.chat_join_request.from);
+      link = tgStr_((u.chat_join_request.invite_link || {}).invite_link);
+    } else if (u.chat_member) {
+      kind = "зміна учасника";
+      who  = tgUserLabel_((u.chat_member.new_chat_member || {}).user || u.chat_member.from);
+      link = tgStr_((u.chat_member.invite_link || {}).invite_link);
+    } else if (u.my_chat_member) {
+      kind = "зміна прав самого бота";
+    }
+    out.push("   #" + u.update_id + " · " + kind + (who ? " · " + who : "") +
+             (link ? " · " + link : " · без посилання"));
+  }
+  Logger.log(out.join("\n"));
+  return out.join("\n");
+}
+
+
 // Розбір: чому вступ не привʼязався до клієнта. Дивиться, за якими саме
 // посиланнями приходили люди, і чи є ці посилання в таблиці.
 //   порожнє посилання — людина зайшла через головне посилання каналу

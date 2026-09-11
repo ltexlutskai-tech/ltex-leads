@@ -2020,6 +2020,21 @@ function testTgSetup() {
   }).length;
   out.push("Підігрів застосунку: " + (warm ? "✅ увімкнено" : "❌ немає — запустіть setupTgWarmTrigger()"));
 
+  // Часовий пояс таблиці й скрипта мусять збігатися, інакше дати «їдуть»:
+  // скрипт пише час по-своєму, а таблиця показує його по-своєму.
+  try {
+    var tzScript = Session.getScriptTimeZone();
+    var tzSheet  = tgSS_(MAIN_FILE_ID).getSpreadsheetTimeZone();
+    if (tzScript === tzSheet) {
+      out.push("Часовий пояс: ✅ " + tzScript + " (таблиця і скрипт однакові)");
+    } else {
+      out.push("Часовий пояс: ❌ скрипт «" + tzScript + "», таблиця «" + tzSheet + "»");
+      out.push("   Через це дати в колонці надсилання показуються зі зсувом.");
+      out.push("   Таблиця: Файл → Налаштування → Часовий пояс.");
+      out.push("   Скрипт: ⚙️ Налаштування проєкту → Часовий пояс.");
+    }
+  } catch (err) { Logger.log("tz: " + err); }
+
   Logger.log(out.join("\n"));
   return out.join("\n");
 }
