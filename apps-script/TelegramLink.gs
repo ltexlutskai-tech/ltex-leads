@@ -2043,10 +2043,17 @@ function testTgSetup() {
   try {
     var tzScript = Session.getScriptTimeZone();
     var tzSheet  = tgSS_(MAIN_FILE_ID).getSpreadsheetTimeZone();
-    if (tzScript === tzSheet) {
-      out.push("Часовий пояс: ✅ " + tzScript + " (таблиця і скрипт однакові)");
+    // Порівнювати назви не можна: «Europe/Kyiv» і «Europe/Kiev» — той самий
+    // пояс, просто нова й стара назва. Питання лише в зсуві від Гринвіча.
+    var now  = new Date();
+    var offS = Utilities.formatDate(now, tzScript, "Z");
+    var offT = Utilities.formatDate(now, tzSheet,  "Z");
+    if (offS === offT) {
+      out.push("Часовий пояс: ✅ " + tzScript +
+               (tzScript === tzSheet ? "" : " / таблиця «" + tzSheet + "» — той самий зсув " + offS));
     } else {
-      out.push("Часовий пояс: ❌ скрипт «" + tzScript + "», таблиця «" + tzSheet + "»");
+      out.push("Часовий пояс: ❌ скрипт «" + tzScript + "» (" + offS +
+               "), таблиця «" + tzSheet + "» (" + offT + ")");
       out.push("   Через це дати в колонці надсилання показуються зі зсувом.");
       out.push("   Таблиця: Файл → Налаштування → Часовий пояс.");
       out.push("   Скрипт: ⚙️ Налаштування проєкту → Часовий пояс.");

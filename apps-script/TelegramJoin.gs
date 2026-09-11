@@ -765,6 +765,101 @@ function tgPeekUpdates() {
 }
 
 
+// ── Перевірка вступу вживу ───────────────────────────────
+// Питання, яке треба відокремити від усього іншого: чи Telegram узагалі
+// присилає нам подію про вступ. Тому створюємо окреме запрошення з
+// упізнаваною назвою, переходимо за ним — і дивимось, що прийшло.
+//
+//   tgLiveJoinTest()  — створює посилання й друкує його
+//   tgLiveJoinCheck() — що прийшло після переходу
+var TG_LIVE_NAME = "TG_LIVE_TEST";
+
+function tgLiveJoinTest() {
+  var chatId = (tgProp_("TG_CHAT_ID") || "").trim();
+  if (!chatId) { Logger.log("❌ Не задано TG_CHAT_ID"); return "немає TG_CHAT_ID"; }
+
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "HH:mm:ss");
+  var mode  = (tgProp_("TG_LINK_MODE") || "request").toLowerCase();
+  var payload = {chat_id: chatId, name: "ПЕРЕВІРКА " + stamp};
+  if (mode === "personal") payload.member_limit = 1; else payload.creates_join_request = true;
+
+  var r = tgApi_("createChatInviteLink", payload);
+  if (!r.ok || !r.result) {
+    Logger.log("❌ Telegram не дав посилання: " + tgExplainTgError_(r.description));
+    return "помилка";
+  }
+  tgSetProp_("TG_LIVE_LINK", r.result.invite_link);
+  tgSetProp_("TG_LIVE_AT", String(Date.now()));
+
+  Logger.log("🧪 ПЕРЕВІРКА ВСТУПУ\n\n" +
+    "1. Відкрийте це посилання з облікового запису, якого НЕМАЄ в каналі:\n   " +
+    r.result.invite_link + "\n" +
+    "2. Пройдіть вступ до кінця (у режимі «request» — натиснути «Подати заявку»).\n" +
+    "3. Через хвилину запустіть tgLiveJoinCheck().\n\n" +
+    "Посилання тимчасове — після перевірки приберіть його: tgLiveJoinDone().");
+  return r.result.invite_link;
+}
+
+function tgLiveJoinCheck() {
+  var link = tgProp_("TG_LIVE_LINK");
+  if (!link) { Logger.log("Спершу запустіть tgLiveJoinTest()"); return "немає посилання"; }
+  var since = parseInt(tgProp_("TG_LIVE_AT"), 10) || 0;
+  var out = ["🧪 РЕЗУЛЬТАТ ПЕРЕВІРКИ", "Посилання: " + link, ""];
+
+  // 1. Може, подія ще в черзі
+  var offset = parseInt(tgProp_("TG_POLL_OFFSET"), 10) || 0;
+  var r = tgApi_("getUpdates", {offset: offset, timeout: 0, limit: 20});
+  var queued = 0;
+  if (r.ok) {
+    (r.result || []).forEach(function (u) {
+      var l = tgStr_(((u.chat_join_request || u.chat_member || {}).invite_link || {}).invite_link);
+      if (l === link) queued++;
+    });
+  }
+
+  // 2. Або її вже забрало опитування — тоді вона в лозі
+  var log = tgSS_(MAIN_FILE_ID).getSheetByName(TG_LOG_SHEET), inLog = 0, who = [];
+  if (log && log.getLastRow() > 1) {
+    var rows = log.getRange(2, 1, log.getLastRow() - 1, 9).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (tgStr_(rows[i][6]) !== link) continue;
+      var d = rows[i][0];
+      if (since && d && typeof d.getTime === "function" && d.getTime() < since - 60000) continue;
+      inLog++;
+      who.push("   " + tgDateStr_(d) + " · " + tgStr_(rows[i][8]));
+    }
+  }
+
+  if (queued || inLog) {
+    out.push("✅ Подія про вступ ПРИЙШЛА (у черзі: " + queued + ", у лозі: " + inLog + ")");
+    out = out.concat(who);
+    out.push("");
+    out.push("Отже, Telegram і бот працюють. Якщо клієнт не впізнається — " +
+             "справа у звірці посилання з рядком, пишіть.");
+  } else {
+    out.push("❌ Події про вступ НЕМАЄ.");
+    out.push("Це означає, що Telegram її не надіслав. Перевірте по черзі:");
+    out.push("   • обліковий запис, яким переходили, точно НЕ був у каналі?");
+    out.push("   • вступ доведено до кінця (у режимі «request» — натиснута «Подати заявку»)?");
+    out.push("   • бот досі адміністратор саме цього каналу (testTelegramBot())?");
+    out.push("   • токен бота не використовує ще хтось: чужий getUpdates забирає наші оновлення собі.");
+  }
+  Logger.log(out.join("\n"));
+  return out.join("\n");
+}
+
+function tgLiveJoinDone() {
+  var link = tgProp_("TG_LIVE_LINK");
+  var chatId = (tgProp_("TG_CHAT_ID") || "").trim();
+  if (link && chatId) {
+    var r = tgApi_("revokeChatInviteLink", {chat_id: chatId, invite_link: link});
+    Logger.log(r.ok ? "✅ Тимчасове посилання відкликано" : "❌ " + tgExplainTgError_(r.description));
+  }
+  tgSetProp_("TG_LIVE_LINK", "");
+  tgSetProp_("TG_LIVE_AT", "");
+}
+
+
 // Розбір: чому вступ не привʼязався до клієнта. Дивиться, за якими саме
 // посиланнями приходили люди, і чи є ці посилання в таблиці.
 //   порожнє посилання — людина зайшла через головне посилання каналу
@@ -987,6 +1082,22 @@ function testTelegramBot() {
       out.push("   ⚠️ chat_member не в allowed_updates — режим \"personal\" не бачитиме вступів");
     }
   }
+
+  // Який саме це канал і яке в нього головне посилання. Головне посилання
+  // каналу — те, за яким приходять люди «нізвідки»; корисно знати його в
+  // обличчя, щоб не шукати потім, звідки взялось невідоме запрошення.
+  try {
+    var mainChat = (PropertiesService.getScriptProperties().getProperty("TG_CHAT_ID") || "").trim();
+    if (mainChat) {
+      var ci = tgApi_("getChat", {chat_id: mainChat});
+      if (ci.ok && ci.result) {
+        var c = ci.result;
+        out.push("Канал: «" + (c.title || "—") + "»" +
+                 (c.username ? " · @" + c.username + " (публічний — люди заходять і без запрошення)" : " · приватний"));
+        if (c.invite_link) out.push("   Головне посилання каналу: " + c.invite_link);
+      }
+    }
+  } catch (err) { Logger.log("getChat: " + err); }
 
   // Канали: TG_CHAT_ID + Chat ID по областях
   var props  = PropertiesService.getScriptProperties();
