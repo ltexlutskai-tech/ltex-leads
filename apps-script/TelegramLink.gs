@@ -420,10 +420,12 @@ function removeTgTrigger() {
 }
 
 function tgRefreshJob() {
+  // Один бюджет на весь запуск, а не по чотири хвилини кожному: інакше
+  // два етапи разом вилітають за шестихвилинну межу Apps Script, і другий
+  // обривається посеред роботи.
+  var t0 = Date.now();
   tgRefreshAll_(false);
-  // Заразом звіряємо з Telegram, хто вже в каналі: подія про вступ
-  // приходить не завжди, а правду можна спитати прямо.
-  try { if (typeof tgSyncJoins === "function") tgSyncJoins(); }
+  try { if (typeof tgSyncJoins === "function") tgSyncJoins(0, t0); }
   catch (err) { Logger.log("tgSyncJoins: " + err); }
 }
 function refreshTgButtons()   { return tgRefreshAll_(false); }   // тільки нові рядки
@@ -1069,14 +1071,6 @@ function tgResolveLink_(info, existing) {
     info.linkWhy = "не вдалось дізнатись імʼя бота — перевірте TG_BOT_TOKEN";
   }
 
-  // Публічний канал: персональне запрошення в ньому нічого не дає.
-  // Telegram відкриває сам канал, підписка йде повз посилання, і в події
-  // про вступ його немає. Тобто ми платили запитом до Telegram на кожен
-  // клік — і за що. Тому даємо всім одну адресу каналу: швидше й чесніше.
-  if (!existing && typeof tgPublicChannelLink_ === "function") {
-    var pub = tgPublicChannelLink_();
-    if (pub) return {link: pub, row: 0, key: tgNormRegion_(info.region), personal: false, publicChannel: true};
-  }
   var map  = tgLinksMap_();
   var key  = tgNormRegion_(info.region);
   var rec  = key ? map[key] : null;
@@ -1086,11 +1080,26 @@ function tgResolveLink_(info, existing) {
       if (k.indexOf(key) === 0 || key.indexOf(k) === 0) { rec = map[k]; break; }
     }
   }
+  // Запамʼятовуємо, чи для САМОЇ області щось налаштовано, — до того як
+  // підставити рядок «За замовчуванням». Він спільний для всіх і окремим
+  // веденням області не є.
+  var ownRec = rec;
   if (!rec || !rec.link) rec = map[tgNormRegion_("За замовчуванням")] || rec;
 
   var regionLink = rec ? rec.link : "";
   if (existing) {
     return {link: existing, row: 0, key: key, personal: existing !== regionLink};
+  }
+
+  // Публічний канал: персональне запрошення в ньому нічого не дає. Telegram
+  // відкриває сам канал, підписка йде повз посилання, і в події про вступ
+  // його немає — тобто запит до Telegram на кожен клік був би ні за що.
+  // Даємо всім одну адресу каналу.
+  // Але лише якщо для області не налаштовано СВІЙ канал чи посилання: така
+  // настройка означає, що клієнтів цієї області ведуть окремо.
+  if (!(ownRec && (ownRec.link || ownRec.chatId)) && typeof tgPublicChannelLink_ === "function") {
+    var pub = tgPublicChannelLink_();
+    if (pub) return {link: pub, row: 0, key: key, personal: false, publicChannel: true};
   }
 
   var personal = tgPersonalLink_(info, rec);   // персональне для цього клієнта
@@ -1405,11 +1414,15 @@ function tgLandingBody_(r) {
   } else {
     h.push('<div class="card"><div class="card-t">' +
            (r.viaBot ? 'Персональне посилання клієнта (відкриє нашого бота)'
+                     : r.publicChannel ? 'Посилання на наш Telegram-канал'
                      : r.personal ? 'Персональне посилання цього клієнта'
                                   : 'Унікальне посилання для області «' + tgEsc_(r.region || "за замовчуванням") + '»') +
            '</div>');
     h.push('<div class="link" id="lnk">' + tgEsc_(r.link) + '</div>');
-    if (r.personal && !r.nick) {
+    if (r.publicChannel) {
+      h.push('<p class="note">Канал публічний, тож адреса в усіх однакова. Нік клієнта ' +
+             'зʼявиться в таблиці лише тоді, коли він відкриє нашого бота.</p>');
+    } else if (r.personal && !r.nick) {
       h.push('<p class="note">Щойно клієнт перейде за ним — його нікнейм у Telegram ' +
              'сам зʼявиться в таблиці.</p>');
     }

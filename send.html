@@ -300,17 +300,23 @@ function render(d) {
     $("c-link").hidden = false;
     $("link-title").textContent = d.viaBot
       ? "Персональне посилання клієнта (відкриє нашого бота)"
-      : d.personal
-        ? "Персональне посилання цього клієнта"
-        : "Унікальне посилання для області «" + (d.region || "за замовчуванням") + "»";
+      : d.publicChannel
+        ? "Посилання на наш Telegram-канал"
+        : d.personal
+          ? "Персональне посилання цього клієнта"
+          : "Унікальне посилання для області «" + (d.region || "за замовчуванням") + "»";
     $("f-link").textContent = d.link;
+    var ln = $("link-note");
     if (d.viaBot && !d.nick) {
-      var ln = $("link-note");
       ln.hidden = false;
       ln.textContent = "Клієнт натисне «Почати» — його нік одразу стане в таблицю, " +
         "а бот сам покаже йому канал.";
+    } else if (d.publicChannel) {
+      ln.hidden = false;
+      ln.textContent = "Канал публічний, тож адреса в усіх однакова. " +
+        "Нік клієнта з'явиться в таблиці лише тоді, коли він відкриє нашого бота.";
     } else if (d.personal && !d.nick) {
-      $("link-note").hidden = false;
+      ln.hidden = false;
     }
     $("b-copy-link").onclick = function () { copyBtn(this, d.link); };
 
