@@ -122,16 +122,8 @@ function handleTelegramUpdate(data, e) {
       return tgOk_();
     }
 
-    // Дедуплікація: Telegram повторює доставку, поки не отримає 200
-    var cache = CacheService.getScriptCache();
-    var key = "tgu_" + data.update_id;
-    if (cache.get(key)) return tgOk_();
-    cache.put(key, "1", 900);
-
-    if (data.chat_join_request)   tgOnJoinRequest_(data.chat_join_request);
-    else if (data.chat_member)    tgOnChatMember_(data.chat_member);
-    else if (data.my_chat_member) Logger.log("TG my_chat_member: " + JSON.stringify(data.my_chat_member).substring(0, 300));
-
+    if (tgAlreadySeen_(data.update_id)) return tgOk_();
+    tgHandleUpdateObject_(data);
     return tgOk_();
   } catch (err) {
     Logger.log("handleTelegramUpdate: " + err);
@@ -144,6 +136,91 @@ function tgOk_() {
 }
 
 // Заявка на вступ (TG_LINK_MODE = "request")
+// Apps Script на POST віддає 302 (перенаправлення на googleusercontent),
+// а Telegram вважає 200 єдиною успішною відповіддю. Тому він повторює
+// доставку — і кожен повтор виглядав як новий вступ: зайві записи в лозі
+// й повторні «🎉 Клієнт приєднався» менеджеру.
+//
+// update_id у Telegram лише зростає, тож достатньо памʼятати найбільший
+// опрацьований. Кеш лишаємо як другий рубіж — від одночасних доставок.
+function tgAlreadySeen_(updateId) {
+  var id = parseInt(updateId, 10);
+  if (!id) return false;
+
+  var cache = CacheService.getScriptCache();
+  var key   = "tgu_" + id;
+  if (cache.get(key)) return true;
+  cache.put(key, "1", 21600);            // 6 годин — максимум для кешу
+
+  var last = parseInt(tgProp_("TG_LAST_UPDATE_ID"), 10) || 0;
+  if (id <= last) return true;
+  tgSetProp_("TG_LAST_UPDATE_ID", String(id));
+  return false;
+}
+
+function tgHandleUpdateObject_(u) {
+  if (u.chat_join_request)   tgOnJoinRequest_(u.chat_join_request);
+  else if (u.chat_member)    tgOnChatMember_(u.chat_member);
+  else if (u.my_chat_member) Logger.log("TG my_chat_member: " + JSON.stringify(u.my_chat_member).substring(0, 300));
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  Опитування замість вебхука                              ║
+// ╚══════════════════════════════════════════════════════════╝
+// Вебхук на Apps Script працює, але кожну доставку Telegram вважає
+// невдалою через 302 і повторює її. Опитування знімає це повністю:
+// ми самі забираємо оновлення й самі підтверджуємо їх зсувом offset.
+// Плата — затримка до хвилини; для запису вступів це неважливо.
+//
+//   useTelegramPolling()  — перейти на опитування (вебхук знімається)
+//   useTelegramWebhook()  — повернутись на вебхук
+function useTelegramPolling() {
+  deleteTelegramWebhook();
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgPollJob") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("tgPollJob").timeBased().everyMinutes(1).create();
+  Logger.log("✅ Перейшли на опитування: раз на хвилину забираємо оновлення самі.\n" +
+             "   Повернутись на вебхук — useTelegramWebhook()");
+}
+
+function useTelegramWebhook() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgPollJob") ScriptApp.deleteTrigger(t);
+  });
+  return setTelegramWebhook();
+}
+
+function tgPollJob() {
+  var offset = parseInt(tgProp_("TG_POLL_OFFSET"), 10) || 0;
+  var seen = 0;
+  for (var pass = 0; pass < 5; pass++) {
+    var r = tgApi_("getUpdates", {
+      offset: offset, timeout: 0, limit: 50,
+      allowed_updates: ["chat_join_request", "chat_member", "my_chat_member"]
+    });
+    if (!r.ok) {
+      Logger.log("tgPollJob: " + tgExplainTgError_(r.description));
+      return;
+    }
+    var list = r.result || [];
+    if (!list.length) break;
+
+    for (var i = 0; i < list.length; i++) {
+      offset = list[i].update_id + 1;
+      seen++;
+      try {
+        if (!tgAlreadySeen_(list[i].update_id)) tgHandleUpdateObject_(list[i]);
+      } catch (err) { Logger.log("tgPollJob update: " + err); }
+    }
+    tgSetProp_("TG_POLL_OFFSET", String(offset));
+    if (list.length < 50) break;
+  }
+  if (seen) Logger.log("tgPollJob: опрацьовано оновлень — " + seen);
+}
+
+
 function tgOnJoinRequest_(req) {
   var chat = req.chat || {};
   var user = req.from || {};
@@ -532,6 +609,66 @@ function handleMembersCommand(text, sender) {
 // ╔══════════════════════════════════════════════════════════╗
 // ║  6. ПЕРЕВІРКА НАЛАШТУВАНЬ БОТА                           ║
 // ╚══════════════════════════════════════════════════════════╝
+// Розбір: чому вступ не привʼязався до клієнта. Дивиться, за якими саме
+// посиланнями приходили люди, і чи є ці посилання в таблиці.
+//   порожнє посилання — людина зайшла через головне посилання каналу
+//   (реклама, пошук, переслали): бот не має за чим її впізнати;
+//   посилання є, але його немає в таблиці — видали не ми або рядок чистили.
+function tgWhyNotMatched(limit) {
+  var max = parseInt(limit, 10) || 15;
+  var ss  = tgSS_(MAIN_FILE_ID);
+  var log = ss.getSheetByName(TG_LOG_SHEET);
+  var out = ["🔎 ЧОМУ ВСТУПИ НЕ ПРИВʼЯЗАЛИСЬ", ""];
+  if (!log || log.getLastRow() < 2) { Logger.log("Лог порожній"); return "Лог порожній"; }
+
+  var rows = log.getRange(2, 1, log.getLastRow() - 1, 9).getValues();
+  var byLink = {}, noLink = 0, total = 0, people = {};
+  for (var i = 0; i < rows.length; i++) {
+    if (tgStr_(rows[i][8]).toLowerCase().indexOf("не привʼязано") !== 0) continue;
+    total++;
+    var link = tgStr_(rows[i][6]);
+    var who  = tgStr_(rows[i][8]).split("·")[1] || "";
+    people[who.trim()] = true;
+    if (!link) { noLink++; continue; }
+    byLink[link] = (byLink[link] || 0) + 1;
+  }
+
+  // Які посилання взагалі є в таблицях
+  var known = {};
+  [MAIN_SHEET, (typeof TG1C_SHEET === "string" ? TG1C_SHEET : "")].forEach(function (nm) {
+    if (!nm) return;
+    var sh = ss.getSheetByName(nm);
+    if (!sh || sh.getMaxColumns() < TG_MAIN_LINK) return;
+    var n = sh.getLastRow() - DATA_START + 1;
+    if (n < 1) return;
+    var v = sh.getRange(DATA_START, TG_MAIN_LINK, n, 1).getValues();
+    for (var i = 0; i < n; i++) { var L = tgStr_(v[i][0]); if (L) known[L] = true; }
+  });
+
+  out.push("Записів «не привʼязано»: " + total + " · різних людей: " +
+           (Object.keys(people).length));
+  out.push("");
+  out.push("Без посилання в події: " + noLink);
+  if (noLink) {
+    out.push("   Це вступ через головне посилання каналу — реклама, пошук, переслали.");
+    out.push("   Такого вступу не привʼяжеш: Telegram не каже, звідки людина прийшла.");
+  }
+
+  var links = Object.keys(byLink).sort(function (a, b) { return byLink[b] - byLink[a]; });
+  out.push("");
+  out.push("Вступів за конкретним посиланням: " + (total - noLink) +
+           " (різних посилань: " + links.length + ")");
+  for (var k = 0; k < Math.min(links.length, max); k++) {
+    out.push("   " + byLink[links[k]] + "× " + links[k] +
+             (known[links[k]] ? "  ← є в таблиці (мало привʼязатись!)" : "  ← у таблиці такого немає"));
+  }
+  if (links.length > max) out.push("   … і ще " + (links.length - max));
+
+  Logger.log(out.join("\n"));
+  return out.join("\n");
+}
+
+
 // Чому окремо від testTelegramBot: той перевіряє бота й канал з боку
 // Telegram. А тут головне питання інше — чи доходить повідомлення про
 // вступ до НАШОГО коду. Між Telegram і таблицею стоїть doPost у Code.gs,
