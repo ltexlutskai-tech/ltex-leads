@@ -32,6 +32,11 @@ function tgBotToken_() {
   return (PropertiesService.getScriptProperties().getProperty("TG_BOT_TOKEN") || "").trim();
 }
 
+// Типи подій, які нам потрібні. Список мусить бути в КОЖНОМУ виклику
+// getUpdates і setWebhook: Telegram запамʼятовує останній переданий, а
+// типовий список НЕ містить chat_member — і вступи в канал зникають.
+var TG_UPDATE_TYPES = ["chat_join_request", "chat_member", "my_chat_member"];
+
 function tgApi_(method, payload) {
   var token = tgBotToken_();
   if (!token) return {ok: false, description: "TG_BOT_TOKEN не задано"};
@@ -82,9 +87,7 @@ function tgHookSecret_() {
 function setTelegramWebhook() {
   var url = getTgTrackUrl_() + "?tghook=" + tgHookSecret_();
   var r = tgApi_("setWebhook", {
-    url: url,
-    allowed_updates: ["chat_join_request", "chat_member", "my_chat_member"],
-    drop_pending_updates: true
+    url: url, allowed_updates: TG_UPDATE_TYPES, drop_pending_updates: true
   });
   Logger.log(r.ok ? "✅ Вебхук Telegram встановлено:\n" + url
                   : "❌ " + (r.description || "невідома помилка"));
@@ -197,8 +200,7 @@ function tgPollJob() {
   var seen = 0;
   for (var pass = 0; pass < 5; pass++) {
     var r = tgApi_("getUpdates", {
-      offset: offset, timeout: 0, limit: 50,
-      allowed_updates: ["chat_join_request", "chat_member", "my_chat_member"]
+      offset: offset, timeout: 0, limit: 50, allowed_updates: TG_UPDATE_TYPES
     });
     if (!r.ok) {
       Logger.log("tgPollJob: " + tgExplainTgError_(r.description));
@@ -726,7 +728,8 @@ function tgDiagCleanup(keep) {
 // Telegram узагалі щось прислав.
 function tgPeekUpdates() {
   var offset = parseInt(tgProp_("TG_POLL_OFFSET"), 10) || 0;
-  var r = tgApi_("getUpdates", {offset: offset, timeout: 0, limit: 20});
+  var r = tgApi_("getUpdates", {offset: offset, timeout: 0, limit: 20,
+                                allowed_updates: TG_UPDATE_TYPES});
   if (!r.ok) {
     var why = tgExplainTgError_(r.description);
     Logger.log("❌ " + why +
@@ -808,7 +811,8 @@ function tgLiveJoinCheck() {
 
   // 1. Може, подія ще в черзі
   var offset = parseInt(tgProp_("TG_POLL_OFFSET"), 10) || 0;
-  var r = tgApi_("getUpdates", {offset: offset, timeout: 0, limit: 20});
+  var r = tgApi_("getUpdates", {offset: offset, timeout: 0, limit: 20,
+                                allowed_updates: TG_UPDATE_TYPES});
   var queued = 0;
   if (r.ok) {
     (r.result || []).forEach(function (u) {
@@ -818,15 +822,23 @@ function tgLiveJoinCheck() {
   }
 
   // 2. Або її вже забрало опитування — тоді вона в лозі
-  var log = tgSS_(MAIN_FILE_ID).getSheetByName(TG_LOG_SHEET), inLog = 0, who = [];
+  // Дивимось усі вступи після початку перевірки, а не лише ті, що прийшли
+  // саме за тестовим посиланням: у публічному каналі людина може зайти й
+  // повз посилання, і тоді в події посилання не буде взагалі.
+  var log = tgSS_(MAIN_FILE_ID).getSheetByName(TG_LOG_SHEET);
+  var inLog = 0, byLink = 0, who = [];
   if (log && log.getLastRow() > 1) {
     var rows = log.getRange(2, 1, log.getLastRow() - 1, 9).getValues();
     for (var i = 0; i < rows.length; i++) {
-      if (tgStr_(rows[i][6]) !== link) continue;
+      var note = tgStr_(rows[i][8]).toLowerCase();
+      if (note.indexOf("приєднався") !== 0 && note.indexOf("не привʼязано") !== 0) continue;
       var d = rows[i][0];
       if (since && d && typeof d.getTime === "function" && d.getTime() < since - 60000) continue;
       inLog++;
-      who.push("   " + tgDateStr_(d) + " · " + tgStr_(rows[i][8]));
+      var l = tgStr_(rows[i][6]);
+      if (l === link) byLink++;
+      who.push("   " + tgDateStr_(d) + " · " + tgStr_(rows[i][8]) +
+               " · " + (l ? (l === link ? "ЗА ТЕСТОВИМ посиланням" : l) : "БЕЗ посилання в події"));
     }
   }
 
@@ -834,8 +846,14 @@ function tgLiveJoinCheck() {
     out.push("✅ Подія про вступ ПРИЙШЛА (у черзі: " + queued + ", у лозі: " + inLog + ")");
     out = out.concat(who);
     out.push("");
-    out.push("Отже, Telegram і бот працюють. Якщо клієнт не впізнається — " +
-             "справа у звірці посилання з рядком, пишіть.");
+    if (byLink || queued) {
+      out.push("У події є наше посилання — значить, звʼязок «хто саме прийшов» працює.");
+    } else {
+      out.push("⚠️ Але БЕЗ посилання: людина зайшла в канал повз запрошення.");
+      out.push("   Так буває в публічному каналі: у нього можна зайти просто за @іменем");
+      out.push("   або з пошуку, і Telegram не каже, звідки людина прийшла.");
+      out.push("   Щоб посилання враховувалось, вступати треба саме з екрана запрошення.");
+    }
   } else {
     out.push("❌ Події про вступ НЕМАЄ.");
     out.push("Це означає, що Telegram її не надіслав. Перевірте по черзі:");
