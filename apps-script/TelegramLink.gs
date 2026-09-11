@@ -419,7 +419,13 @@ function removeTgTrigger() {
   Logger.log("Видалено тригерів: " + n);
 }
 
-function tgRefreshJob()       { tgRefreshAll_(false); }
+function tgRefreshJob() {
+  tgRefreshAll_(false);
+  // Заразом звіряємо з Telegram, хто вже в каналі: подія про вступ
+  // приходить не завжди, а правду можна спитати прямо.
+  try { if (typeof tgSyncJoins === "function") tgSyncJoins(); }
+  catch (err) { Logger.log("tgSyncJoins: " + err); }
+}
 function refreshTgButtons()   { return tgRefreshAll_(false); }   // тільки нові рядки
 function refreshTgButtonsForce() { return tgRefreshAll_(true); } // перезаписати ВСІ кнопки
 
@@ -663,6 +669,7 @@ function tgJsonPayload_(r) {
     ok: true, id: r.id, name: r.name, phone: r.phone, intl: tgIntlPhone_(r.phone),
     region: r.region, city: r.city, manager: r.manager, interest: r.interest,
     link: r.link, personal: !!r.personal, noLink: !!r.noLink, viaBot: !!r.viaBot,
+    publicChannel: !!r.publicChannel,
     linkWhy: r.linkWhy || "", notSent: !!r.notSent,
     repeat: !!r.repeat, sentAt: r.sentAt, nick: r.nick || "", joinedAt: r.joinedAt || "",
     absent: tgNoAppsFrom_(r.comment), msg: tgMessageText_(r), ms: r.ms || "",
@@ -759,6 +766,7 @@ function markTgSent_(id, source, hintRow) {
     info.linkRow   = res.row;
     info.personal  = !!res.personal;
     info.viaBot    = !!res.viaBot;
+    info.publicChannel = !!res.publicChannel;
     info.noLink    = !res.link;
     info.repeat    = repeat;
     info.source    = source;
@@ -1059,6 +1067,15 @@ function tgResolveLink_(info, existing) {
     var deep = tgBotDeepLink_(info.id);
     if (deep) return {link: deep, row: 0, key: tgNormRegion_(info.region), personal: true, viaBot: true};
     info.linkWhy = "не вдалось дізнатись імʼя бота — перевірте TG_BOT_TOKEN";
+  }
+
+  // Публічний канал: персональне запрошення в ньому нічого не дає.
+  // Telegram відкриває сам канал, підписка йде повз посилання, і в події
+  // про вступ його немає. Тобто ми платили запитом до Telegram на кожен
+  // клік — і за що. Тому даємо всім одну адресу каналу: швидше й чесніше.
+  if (!existing && typeof tgPublicChannelLink_ === "function") {
+    var pub = tgPublicChannelLink_();
+    if (pub) return {link: pub, row: 0, key: tgNormRegion_(info.region), personal: false, publicChannel: true};
   }
   var map  = tgLinksMap_();
   var key  = tgNormRegion_(info.region);

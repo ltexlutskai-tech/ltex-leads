@@ -262,12 +262,14 @@ function tgOnMessage_(msg) {
     var manager = tgStr_(d[COL.MANAGER - 1]);
     var stamp   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
 
-    // Нік уже відомий — записуємо, навіть якщо в канал ще не вступили
-    var vals = [tgStr_(d[TG_MAIN_STATUS - 1]) || TG_STATUS_SENT,
+    // Нік уже відомий. Заразом питаємо Telegram, чи людина вже в каналі:
+    // якщо так, події про вступ не буде ніколи — її треба зарахувати тут.
+    var already = tgIsInChannel_(tgMemberStatus_(user.id));
+    var vals = [already ? TG_STATUS_JOINED : (tgStr_(d[TG_MAIN_STATUS - 1]) || TG_STATUS_SENT),
                 d[TG_MAIN_DATE - 1] || stamp,
                 tgStr_(d[TG_MAIN_LINK - 1]),
                 nick,
-                d[TG_MAIN_JOINED - 1]];
+                already ? (d[TG_MAIN_JOINED - 1] || stamp) : d[TG_MAIN_JOINED - 1]];
     sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
     try {
       sheet.getRange(row, TG_MAIN_NICK).setNote(
@@ -281,7 +283,8 @@ function tgOnMessage_(msg) {
     var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(sheet, row) : "";
     if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, vals);
     tgLogAppend_([new Date(), id, name, phone, tgStr_(d[COL.REGION - 1]), manager,
-                  "", "бот /start", "відкрив бота: " + nick]);
+                  "", "бот /start",
+                  (already ? "приєднався: " : "відкрив бота: ") + nick]);
 
     tgSend_(chat,
       "Вітаємо" + (name ? ", " + tgFirstName_(name) : "") + "! 👋\n\n" +
@@ -292,7 +295,7 @@ function tgOnMessage_(msg) {
       var mgr = manager ? tgManagers_()[manager] : null;
       if (mgr && mgr.viberId) {
         sendViber(mgr.viberId,
-          "👤 Клієнт відкрив бота L-TEX!\n\n" +
+          (already ? "🎉 Клієнт у Telegram-каналі!\n\n" : "👤 Клієнт відкрив бота L-TEX!\n\n") +
           "Нік: " + nick + "\nПІБ: " + (name || "—") + "\nТелефон: " + (phone || "—") +
           "\nID: " + id + "\nЧас: " + stamp);
       }
@@ -305,6 +308,58 @@ function tgOnMessage_(msg) {
 function tgSend_(chatId, text) {
   if (!chatId) return;
   tgApi_("sendMessage", {chat_id: chatId, text: text, disable_web_page_preview: false});
+}
+
+// Telegram уміє сказати, чи конкретна людина вже в каналі — треба лише
+// знати її Telegram-id. Це рятує там, де події про вступ не було: людина
+// вступила давно, або зайшла тоді, коли бот ще не був адміністратором.
+function tgMemberStatus_(userId) {
+  var chatId = (tgProp_("TG_CHAT_ID") || "").trim();
+  if (!chatId || !userId) return "";
+  var r = tgApi_("getChatMember", {chat_id: chatId, user_id: userId});
+  if (!r.ok || !r.result) return "";
+  return tgStr_(r.result.status);
+}
+
+function tgIsInChannel_(status) {
+  return status === "member" || status === "administrator" || status === "creator";
+}
+
+// Проставити «Приєднався» рядку клієнта, якщо він уже в каналі
+function tgMarkJoined_(sheet, row, nick, stampIn) {
+  var stamp = stampIn ||
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
+  var d = sheet.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+  if (tgStr_(d[TG_MAIN_STATUS - 1]) === TG_STATUS_JOINED && tgStr_(d[TG_MAIN_JOINED - 1])) {
+    return null;                       // уже позначено — нічого не чіпаємо
+  }
+  var vals = [TG_STATUS_JOINED,
+              d[TG_MAIN_DATE - 1] || stamp,
+              tgStr_(d[TG_MAIN_LINK - 1]),
+              nick || tgStr_(d[TG_MAIN_NICK - 1]),
+              d[TG_MAIN_JOINED - 1] || stamp];
+  sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+  return vals;
+}
+
+// Публічний канал має постійну адресу виду https://t.me/імʼя — вона
+// однакова для всіх і не потребує запиту до Telegram на кожен клік.
+// Для приватного каналу такої адреси немає: там лишаються запрошення.
+function tgPublicChannelLink_() {
+  var saved = tgProp_("TG_PUBLIC_LINK");
+  if (saved) return saved === "-" ? "" : saved;
+  try {
+    var chatId = (tgProp_("TG_CHAT_ID") || "").trim();
+    if (!chatId) return "";
+    var r = tgApi_("getChat", {chat_id: chatId});
+    if (r.ok && r.result && r.result.username) {
+      var link = "https://t.me/" + r.result.username;
+      tgSetProp_("TG_PUBLIC_LINK", link);
+      return link;
+    }
+    tgSetProp_("TG_PUBLIC_LINK", "-");        // канал приватний — більше не питаємо
+  } catch (err) { Logger.log("tgPublicChannelLink_: " + err); }
+  return "";
 }
 
 // Посилання на канал, яке бот дає клієнту після «Почати»
@@ -926,6 +981,55 @@ function tgPeekUpdates() {
   }
   Logger.log(out.join("\n"));
   return out.join("\n");
+}
+
+
+// ── Звірка «хто вже в каналі» ────────────────────────────
+// Подія про вступ приходить не завжди: людина могла вступити давно, або
+// в момент вступу бот ще не був адміністратором, або оновлення загубилось.
+// Тому для всіх, чий Telegram-id ми знаємо, час від часу питаємо Telegram
+// прямо. Це єдиний спосіб дізнатись правду заднім числом.
+function tgSyncJoins(limit) {
+  var max = parseInt(limit, 10) || 150;
+  var sh  = tgSS_(MAIN_FILE_ID).getSheetByName(TG_USERS_SHEET);
+  if (!sh || sh.getLastRow() < 2) { Logger.log("Реєстр порожній — ніхто ще не відкривав бота"); return 0; }
+
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+  var t0 = Date.now(), checked = 0, joined = 0, left = 0;
+
+  for (var i = 0; i < rows.length && checked < max; i++) {
+    if (Date.now() - t0 > TG_TIME_BUDGET) { Logger.log("⏳ Бюджет часу — решту звіримо наступного разу"); break; }
+    var uid = tgStr_(rows[i][0]), cid = tgStr_(rows[i][2]);
+    if (!uid || !cid) continue;
+
+    var sheet = tgSheetForId_(cid);
+    var row   = sheet ? tgFindRow_(sheet, COL.ID, DATA_START, cid) : -1;
+    if (row === -1) continue;
+
+    var cur = tgStr_(sheet.getRange(row, TG_MAIN_STATUS).getValue());
+    if (cur === TG_STATUS_JOINED) continue;          // уже зараховано
+
+    checked++;
+    var st = tgMemberStatus_(uid);
+    if (!tgIsInChannel_(st)) { if (st) left++; continue; }
+
+    var vals = tgMarkJoined_(sheet, row, tgStr_(rows[i][1]));
+    if (!vals) continue;
+    joined++;
+
+    var manager = tgStr_(sheet.getRange(row, COL.MANAGER).getValue());
+    tgSyncToManager_(manager, cid, vals);
+    var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(sheet, row) : "";
+    if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, vals);
+    tgLogAppend_([new Date(), cid, tgStr_(sheet.getRange(row, COL.NAME).getValue()),
+                  tgStr_(sheet.getRange(row, COL.PHONE).getValue()),
+                  tgStr_(sheet.getRange(row, COL.REGION).getValue()), manager,
+                  vals[2], "звірка з Telegram", "приєднався: " + tgStr_(rows[i][1])]);
+  }
+
+  Logger.log("Звірка з Telegram: перевірено " + checked + ", нових у каналі " + joined +
+             (left ? ", поза каналом " + left : ""));
+  return joined;
 }
 
 
