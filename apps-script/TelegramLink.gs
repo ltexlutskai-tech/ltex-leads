@@ -548,6 +548,62 @@ function removeTgTrigger() {
   Logger.log("Видалено тригерів: " + n);
 }
 
+// ── Кнопка новому ліду — у межах хвилини ──────────────────────────────────
+// Повна звірка (tgRefreshJob) ходить раз на 15 хвилин і перебирає всі файли
+// менеджерів — робити її частіше немає сенсу й немає квоти. Але новий лід
+// приходить щодня, і менеджер не має чекати чверть години, щоб зʼявилась
+// кнопка: без неї він фізично не може надіслати запрошення.
+//
+// Тому окремий легкий запуск раз на хвилину: дивиться ЛИШЕ хвіст аркуша —
+// останні рядки, де й зʼявляються нові ліди. Два читання діапазону замість
+// повного обходу, тож у квоту вкладається спокійно.
+var TG_TAIL_ROWS = 120;   // скільки останніх рядків перевіряємо
+
+function setupTgQuickTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgQuickButtonsJob") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("tgQuickButtonsJob").timeBased().everyMinutes(1).create();
+  Logger.log("✅ Кнопки новим лідам: перевірка щохвилини");
+}
+
+function removeTgQuickTrigger() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgQuickButtonsJob") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  Logger.log("Видалено тригерів швидких кнопок: " + n);
+}
+
+function tgQuickButtonsJob() {
+  var n = 0;
+  try { n += tgTailButtons_(tgSS_(MAIN_FILE_ID).getSheetByName(MAIN_SHEET), DATA_START, COL.ID,
+                            TG_MAIN_BTN, TG_MAIN_STATUS); }
+  catch (err) { Logger.log("tgQuickButtonsJob (головна): " + err); }
+
+  var one = (typeof tg1CSheetName_ === "function") ? tg1CSheetName_() : "";
+  if (one) {
+    try {
+      var sh = tgSS_(MAIN_FILE_ID).getSheetByName(one);
+      if (sh) n += tgTailButtons_(sh, DATA_START, COL.ID, TG_MAIN_BTN, TG_MAIN_STATUS);
+    } catch (err) { Logger.log("tgQuickButtonsJob (1С): " + err); }
+  }
+  if (n) Logger.log("Нових кнопок: " + n);
+  return n;
+}
+
+// Кнопки лише в хвості аркуша. Файли менеджерів тут НЕ чіпаємо: рядок
+// доїжджає туди синхронізацією, і кнопку йому поставить планова звірка.
+function tgTailButtons_(sheet, startRow, idCol, btnCol, statusCol) {
+  if (!sheet || sheet.getMaxColumns() < btnCol) return 0;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < startRow) return 0;
+  var from = Math.max(startRow, lastRow - TG_TAIL_ROWS + 1);
+  var ids  = sheet.getRange(from, idCol, lastRow - from + 1, 1).getValues();
+  return tgFillButtons_(sheet, from, ids, btnCol, statusCol, false);
+}
+
+
 function tgRefreshJob() {
   // Один бюджет на весь запуск, а не по чотири хвилини кожному: інакше
   // два етапи разом вилітають за шестихвилинну межу Apps Script, і другий
@@ -861,6 +917,16 @@ function tgEcoEvent_(p) {
 //   · дату надсилання не вигадуємо — інакше в рядку зʼявиться «надіслано»
 //     там, де менеджер кнопку не тиснув;
 //   · нік та id пишемо завжди: це нова інформація незалежно від статусу.
+// Чи можна автоматиці просувати цей статус. «🚫 Не потрібно» і «❌ Відмовився»
+// ставить менеджер руками — це його рішення про рядок, а не факт про канал.
+//
+// Своя копія, а не виклик tgStatusIsOurs_ із TelegramJoin.gs: місток мусить
+// працювати, навіть якщо старий файл бота колись приберуть із проєкту.
+function tgEcoStatusIsOurs_(status) {
+  var s = tgStr_(status);
+  return !s || s === TG_STATUS_SENT || s === TG_STATUS_BOT || s === TG_STATUS_JOINED;
+}
+
 function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
   var sheet = tgSheetForId_(id);
   if (!sheet) return "no-sheet";
@@ -873,7 +939,7 @@ function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
   var label = nick ? "@" + nick.replace(/^@/, "") : (fullName || "");
 
   var next = cur;
-  if (tgStatusIsOurs_(cur)) {
+  if (tgEcoStatusIsOurs_(cur)) {
     if (act === "join") next = TG_STATUS_JOINED;
     else if (cur !== TG_STATUS_JOINED) next = TG_STATUS_BOT;
   }
