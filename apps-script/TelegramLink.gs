@@ -291,6 +291,7 @@ function tgButtonsForSheet_(sheet, startRow, idCol, btnCol, statusCol, force) {
 // Запускати РАЗ, після оновлення коду.
 function upgradeTgColumns() {
   var report = ["🔧 Додаємо колонку «" + TG_HDR_TGID + "»"];
+  var one = (typeof tg1CSheetName_ === "function") ? tg1CSheetName_() : "";
   try {
     ensureTgStatusDictionary_();
     var main = tgMainSheet_();
@@ -299,7 +300,6 @@ function upgradeTgColumns() {
       tgSetupFormat_(main, tgMainCols_());
       report.push("✅ головна «" + MAIN_SHEET + "»");
     }
-    var one = (typeof tg1CSheetName_ === "function") ? tg1CSheetName_() : "";
     if (one) {
       var sh1 = tgSS_(MAIN_FILE_ID).getSheetByName(one);
       if (sh1) { tgSetupSheet_(sh1, tgMainCols_()); report.push("✅ аркуш «" + one + "»"); }
@@ -312,8 +312,14 @@ function upgradeTgColumns() {
     if (!fileId) continue;
     try {
       var ss = tgSS_(fileId);
-      var sheets = ss.getSheets();
-      for (var i = 0; i < sheets.length; i++) tgSetupSheet_(sheets[i], tgMgrCols_());
+      // Рівно ті самі аркуші, що їх оформлює installTgColumns(): основний
+      // (перший) і, якщо є, аркуш клієнтів 1С. Решту вкладок файлу менеджера
+      // не чіпаємо — вони не наші.
+      tgSetupSheet_(ss.getSheets()[0], tgMgrCols_());
+      var mgr1C = one ? ss.getSheetByName(one) : null;
+      if (mgr1C && mgr1C.getSheetId() !== ss.getSheets()[0].getSheetId()) {
+        tgSetupSheet_(mgr1C, tgMgrCols_());
+      }
       report.push("✅ " + name);
     } catch (err) { report.push("⚠️ " + name + ": " + err); }
   }
