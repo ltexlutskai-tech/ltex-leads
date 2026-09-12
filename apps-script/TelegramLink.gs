@@ -370,10 +370,17 @@ function tgEcoCheck() {
   var sample = tgEcoDeepLink_("LTEX-20260101-0001");
   L.push(sample ? "✅ Приклад посилання: " + sample : "❌ Посилання не будується — див. вище");
 
-  var url = "";
-  try { url = ScriptApp.getService().getUrl(); } catch (err) { url = ""; }
+  // getUrl() у редакторі віддає ТЕСТОВУ адресу («…/dev»), а не бойову
+  // («…/exec») — і ідентифікатор у неї інший. Підставити її в .env означає
+  // послати систему стукати в те, чого немає. Беремо ту саму адресу, на яку
+  // ведуть кнопки в таблиці.
+  var url = getTgTrackUrl_();
   L.push("", "Що має бути в НАШІЙ системі (.env):");
   L.push("   LEADS_SHEETS_WEBHOOK_URL = " + (url || "<адреса цього веб-застосунку>"));
+  if (url && url.indexOf("/exec") < 0) {
+    L.push("   ⚠️ Адреса не закінчується на «/exec» — це тестове розгортання.");
+    L.push("      Бойову адресу візьміть у Деплой → Керувати розгортаннями.");
+  }
   L.push("   LEADS_TG_LINK_SECRET     = той самий секрет");
   L.push("   TELEGRAM_CHANNEL_USERNAME = нік каналу (напр. L_TEX)");
   L.push("", "І в Telegram:");
