@@ -2148,7 +2148,8 @@ function tgResetProgress(confirm) {
   var full = word.indexOf("все") > 0;
   var cols = full ? TG_BLOCK : 2;          // статус+дата, або весь блок
   var out  = [run ? "🧹 ЧИЩЕННЯ" : "👀 ПОКАЗУЮ, ЩО БУДЕ ПРИБРАНО (нічого не змінюю)",
-              full ? "Режим: усе, включно з посиланнями, ніками й лічильниками"
+              full ? "Режим: усе по Telegram — статуси, дати, посилання, ніки, TG ID, " +
+                     "лічильники видач і памʼять про учасників бота"
                    : "Режим: статуси, дати й примітки; посилання, ніки й дати приєднання лишаються",
               ""];
   var t0 = Date.now(), rows = 0, sheets = 0, left = 0;
@@ -2167,6 +2168,27 @@ function tgResetProgress(confirm) {
 
     sheets++; rows += busy;
     out.push("   " + label + ": " + busy);
+
+    // Колонка «Telegram» у самому рядку клієнта. Нік туди пишемо тільки коли
+    // вона була порожня — отже наш той запис, який дослівно збігається з ніком
+    // у TG-блоці. Прибираємо лише такі: ніки, заведені руками або привезені з
+    // 1С, лишаються недоторканими.
+    if (full && statusCol === TG_MAIN_STATUS && typeof COL === "object" && COL.TG) {
+      try {
+        var nicks = sh.getRange(start, TG_MAIN_NICK, n, 1).getValues();
+        var tgCol = sh.getRange(start, COL.TG, n, 1).getValues();
+        var ours  = 0;
+        for (var k = 0; k < n; k++) {
+          var nk = tgStr_(nicks[k][0]);
+          if (nk && tgStr_(tgCol[k][0]) === nk) { tgCol[k][0] = ""; ours++; }
+        }
+        if (ours) {
+          out.push("      з них нік у колонці «Telegram»: " + ours);
+          if (run) sh.getRange(start, COL.TG, n, 1).setValues(tgCol);
+        }
+      } catch (err) { Logger.log("колонка Telegram: " + err); }
+    }
+
     if (!run) return;
 
     sh.getRange(start, statusCol, n, cols).clearContent();
@@ -2203,6 +2225,17 @@ function tgResetProgress(confirm) {
     if (links && links.getLastRow() > 1) {
       out.push("   лічильники видач у «" + TG_LINKS_SHEET + "»");
       if (run) links.getRange(2, 4, links.getLastRow() - 1, 2).clearContent();
+    }
+  }
+
+  // Памʼять «кого ми бачили в боті». Для чистого повторного тесту її теж
+  // треба прибрати: інакше звірка з каналом одразу впізнає старих учасників і
+  // проставить їм статуси, яких менеджер не ставив.
+  if (full && typeof TG_USERS_SHEET === "string") {
+    var users = ss.getSheetByName(TG_USERS_SHEET);
+    if (users && users.getLastRow() > 1) {
+      out.push("   памʼять про учасників бота: " + (users.getLastRow() - 1) + " записів");
+      if (run) users.getRange(2, 1, users.getLastRow() - 1, users.getLastColumn()).clearContent();
     }
   }
 
