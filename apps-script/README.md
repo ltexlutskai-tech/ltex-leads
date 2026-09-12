@@ -121,9 +121,16 @@ tgEcoCheck()
   scripts/register-telegram-webhook.ts` — він просить подію `chat_member`
   явно, бо у типовий набір Telegram її не кладе.
 
-> ⚠️ Один бот не може одночасно жити на вебхуку й на опитуванні. Якщо цей
-> скрипт опитує **того самого** бота (`TG_UPDATE_MODE = poll`), опитування
-> треба вимкнути. `tgEcoCheck()` про це попереджає.
+> ⚠️ Один бот не може одночасно жити на вебхуку й на опитуванні. У режимі
+> містка оновлення приймає бот системи, тому скрипт має перестати їх забирати:
+>
+> ```
+> stopTelegramUpdates()
+> ```
+>
+> Знімає і вебхук скрипта, і хвилинне опитування. Кнопка, статуси, звіти й
+> звірка з файлами менеджерів працюють як раніше. `tgEcoCheck()` про це
+> попереджає, якщо забути.
 
 ### Після оновлення коду
 
@@ -755,6 +762,7 @@ var correctHeaders=[..., HDR_NEW_STATUS, HDR_NEW_COMMENT,
 | `tgLiveJoinTest()` · `tgLiveJoinCheck()` · `tgLiveJoinDone()` | перевірка вступу вживу окремим запрошенням |
 | `tgDiagToDrive()` · `tgDiagCleanup()` | скласти всю діагностику в файл на Диску |
 | `useTelegramPolling()` · `useTelegramWebhook()` | забирати оновлення самим замість вебхука |
+| `stopTelegramUpdates()` | зовсім не забирати оновлення (режим містка — їх приймає бот системи) |
 | `testTgSetup()` · `testTelegramBot()` · `testTgPersonalLink()` | діагностика |
 | `sendTgReport()` | звіт у Viber власникам |
 | `restoreTgStatusesFromLog()` | відновити статуси з логу |

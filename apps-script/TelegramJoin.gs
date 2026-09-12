@@ -201,6 +201,35 @@ function useTelegramWebhook() {
   return setTelegramWebhook();
 }
 
+// Повністю припинити забирати оновлення Telegram цим скриптом: знімається і
+// вебхук, і хвилинне опитування.
+//
+// Потрібно в режимі містка (TG_CLIENT_LINK = eco): оновлення від Telegram
+// приймає бот нашої системи, а події в таблицю приходять від нього. Якщо це
+// ТОЙ САМИЙ бот, опитування зі скрипта забирало б у системи її оновлення —
+// клієнт лишався б без відповіді. Один бот не може жити на вебхуку й на
+// опитуванні водночас.
+//
+// Решта роботи скрипта не зачіпається: кнопка, статуси, звіти, звірка з
+// файлами менеджерів і тригер оновлення працюють як раніше.
+function stopTelegramUpdates() {
+  var killed = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgPollJob") { ScriptApp.deleteTrigger(t); killed++; }
+  });
+  var hook = "не знімався";
+  try {
+    var r = tgApi_("deleteWebhook", {});
+    hook = r && r.ok ? "знято" : "не знявся: " + (r && r.description ? r.description : "невідомо");
+  } catch (err) { hook = "не знявся: " + err; }
+  tgSetProp_("TG_UPDATE_MODE", "off");
+  Logger.log("🛑 Скрипт більше не забирає оновлення Telegram.\n" +
+             "   Опитування: вимкнено тригерів — " + killed + "\n" +
+             "   Вебхук скрипта: " + hook + "\n\n" +
+             "   Оновлення тепер приймає лише бот нашої системи.\n" +
+             "   Повернутись назад: useTelegramWebhook() або useTelegramPolling().");
+}
+
 function tgPollJob() {
   var offset = parseInt(tgProp_("TG_POLL_OFFSET"), 10) || 0;
   var seen = 0;
