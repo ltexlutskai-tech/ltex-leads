@@ -256,7 +256,7 @@ function tgOnMessage_(msg) {
       return;
     }
 
-    var d       = sheet.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+    var d       = sheet.getRange(row, 1, 1, TG_MAIN_LAST).getValues()[0];
     var name    = tgStr_(d[COL.NAME - 1]);
     var phone   = tgStr_(d[COL.PHONE - 1]);
     var manager = tgStr_(d[COL.MANAGER - 1]);
@@ -270,7 +270,8 @@ function tgOnMessage_(msg) {
                 d[TG_MAIN_DATE - 1] || stamp,
                 tgStr_(d[TG_MAIN_LINK - 1]),
                 nick,
-                already ? (d[TG_MAIN_JOINED - 1] || stamp) : d[TG_MAIN_JOINED - 1]];
+                already ? (d[TG_MAIN_JOINED - 1] || stamp) : d[TG_MAIN_JOINED - 1],
+                tgStr_(user.id) || tgStr_(d[TG_MAIN_TGID - 1])];
     sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
     try {
       sheet.getRange(row, TG_MAIN_NICK).setNote(
@@ -332,14 +333,14 @@ function tgIsInChannel_(status) {
 // наше, туди пишемо вільно.
 function tgStatusIsOurs_(status) {
   var s = tgStr_(status);
-  return !s || s === TG_STATUS_SENT || s === TG_STATUS_JOINED;
+  return !s || s === TG_STATUS_SENT || s === TG_STATUS_BOT || s === TG_STATUS_JOINED;
 }
 
 // Проставити «Приєднався» рядку клієнта, якщо він уже в каналі
 function tgMarkJoined_(sheet, row, nick, stampIn) {
   var stamp = stampIn ||
     Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
-  var d = sheet.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+  var d = sheet.getRange(row, 1, 1, TG_MAIN_LAST).getValues()[0];
   var cur = tgStr_(d[TG_MAIN_STATUS - 1]);
   if (!tgStatusIsOurs_(cur)) return null;                       // ручний вибір менеджера
   if (cur === TG_STATUS_JOINED && tgStr_(d[TG_MAIN_JOINED - 1])) return null;  // уже зараховано
@@ -350,7 +351,8 @@ function tgMarkJoined_(sheet, row, nick, stampIn) {
               d[TG_MAIN_DATE - 1],
               tgStr_(d[TG_MAIN_LINK - 1]),
               nick || tgStr_(d[TG_MAIN_NICK - 1]),
-              d[TG_MAIN_JOINED - 1] || stamp];
+              d[TG_MAIN_JOINED - 1] || stamp,
+              d[TG_MAIN_TGID - 1]];
   sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
   return vals;
 }
@@ -524,7 +526,7 @@ function tgRecordJoin_(user, link, chat, kind) {
       return;
     }
 
-    var d       = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+    var d       = main.getRange(row, 1, 1, TG_MAIN_LAST).getValues()[0];
     var id      = tgStr_(d[COL.ID - 1]);
     var name    = tgStr_(d[COL.NAME - 1]);
     var phone   = tgStr_(d[COL.PHONE - 1]);
@@ -537,7 +539,8 @@ function tgRecordJoin_(user, link, chat, kind) {
       tgStr_(d[TG_MAIN_DATE - 1]) || stamp,     // дату надсилання зберігаємо
       tgStr_(d[TG_MAIN_LINK - 1]) || inviteUrl,
       nick,
-      tgStr_(d[TG_MAIN_JOINED - 1]) || stamp    // перше приєднання не переписуємо
+      tgStr_(d[TG_MAIN_JOINED - 1]) || stamp,   // перше приєднання не переписуємо
+      (user && user.id ? tgStr_(user.id) : "") || tgStr_(d[TG_MAIN_TGID - 1])
     ];
     main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
 
@@ -670,14 +673,14 @@ function findLeadByTgNick(query) {
 }
 
 function tgFindByNickInSheet_(main, query) {
-  if (!main || main.getMaxColumns() < TG_MAIN_JOINED) return null;
+  if (!main || main.getMaxColumns() < TG_MAIN_LAST) return null;
   var lastRow = main.getLastRow();
   if (lastRow < DATA_START) return null;
 
   var q      = tgStr_(query).toLowerCase().replace(/^@/, "");
   var digits = q.replace(/\D/g, "");
   var byPhone = digits.length >= 8 ? digits.slice(-9) : "";
-  var data = main.getRange(DATA_START, 1, lastRow - DATA_START + 1, TG_MAIN_JOINED).getValues();
+  var data = main.getRange(DATA_START, 1, lastRow - DATA_START + 1, TG_MAIN_LAST).getValues();
 
   for (var i = 0; i < data.length; i++) {
     var nick = tgStr_(data[i][TG_MAIN_NICK - 1]);
@@ -772,10 +775,10 @@ function tgKnownMembers_() {
 
   for (var s = 0; s < sources.length; s++) {
     var sh = sources[s].sheet;
-    if (!sh || sh.getMaxColumns() < TG_MAIN_JOINED) continue;
+    if (!sh || sh.getMaxColumns() < TG_MAIN_LAST) continue;
     var last = sh.getLastRow();
     if (last < DATA_START) continue;
-    var data = sh.getRange(DATA_START, 1, last - DATA_START + 1, TG_MAIN_JOINED).getValues();
+    var data = sh.getRange(DATA_START, 1, last - DATA_START + 1, TG_MAIN_LAST).getValues();
     for (var i = 0; i < data.length; i++) {
       var nick = tgStr_(data[i][TG_MAIN_NICK - 1]);
       if (!nick) continue;

@@ -38,12 +38,18 @@
 
 // ── Колонки ───────────────────────────────────────────────
 var TG_MAIN_BTN = 20, TG_MAIN_STATUS = 21, TG_MAIN_DATE = 22, TG_MAIN_LINK = 23,
-    TG_MAIN_NICK = 24, TG_MAIN_JOINED = 25;
+    TG_MAIN_NICK = 24, TG_MAIN_JOINED = 25, TG_MAIN_TGID = 26;
 var TG_MGR_BTN  = 19, TG_MGR_STATUS  = 20, TG_MGR_DATE  = 21, TG_MGR_LINK  = 22,
-    TG_MGR_NICK  = 23, TG_MGR_JOINED  = 24;
+    TG_MGR_NICK  = 23, TG_MGR_JOINED  = 24, TG_MGR_TGID  = 25;
 
-// Скільки колонок блоку TG пишеться одним записом: статус → дата приєднання
-var TG_BLOCK = 5;
+// Остання колонка блоку TG. Рядок читаємо саме до неї: якби читали до
+// попередньої, новий стовпчик лишався б непрочитаним — і запис блоку
+// затирав би його порожнечею.
+var TG_MAIN_LAST = TG_MAIN_TGID;
+var TG_MGR_LAST  = TG_MGR_TGID;
+
+// Скільки колонок блоку TG пишеться одним записом: статус → TG ID
+var TG_BLOCK = 6;
 
 var TG_HDR_BTN    = "📨 Надіслати TG";
 var TG_HDR_STATUS = "Статус TG-посилання";
@@ -51,13 +57,21 @@ var TG_HDR_DATE   = "Дата надсилання TG";
 var TG_HDR_LINK   = "Видане TG-посилання";
 var TG_HDR_NICK   = "TG нікнейм клієнта";
 var TG_HDR_JOINED = "Дата приєднання";
+// Числовий Telegram-id клієнта. Нік людина може змінити будь-коли, id — ні:
+// саме він звʼязує номер телефону з чатом у нашій системі.
+var TG_HDR_TGID   = "TG ID клієнта";
 
 var TG_BTN_LABEL      = "📨 Надіслати";
 var TG_BTN_LABEL_SENT = "🔁 Посилання";
 
 var TG_STATUS_SENT   = "✅ Надіслано";
+// Проміжний стан: клієнт відкрив бота (ми вже знаємо його нік та id), але на
+// канал ще не підписався. Без цього стану найцінніший крок клієнта — те, що
+// він взагалі відгукнувся, — був би не видно в таблиці.
+var TG_STATUS_BOT    = "💬 У боті";
 var TG_STATUS_JOINED = "👤 Приєднався";
-var TG_STATUS_LIST   = [TG_STATUS_SENT, TG_STATUS_JOINED, "🚫 Не потрібно", "❌ Відмовився"];
+var TG_STATUS_LIST   = [TG_STATUS_SENT, TG_STATUS_BOT, TG_STATUS_JOINED,
+                        "🚫 Не потрібно", "❌ Відмовився"];
 
 // Одне натискання кнопки відкривало головну таблицю пʼять разів.
 // Кеш живе рівно один запуск скрипта, тож дані завжди свіжі.
@@ -170,7 +184,7 @@ function installTgColumns() {
     ensureTgLogSheet_();
     ensureTgStatusDictionary_();
   });
-  add("main.hdr", "Головна «" + MAIN_SHEET + "»: колонки T–Y", function () {
+  add("main.hdr", "Головна «" + MAIN_SHEET + "»: колонки T–Z", function () {
     tgSetupHeaders_(tgMainSheet_(), tgMainCols_());
   });
   add("main.fmt", "Головна: списки й підсвітка", function () {
@@ -182,7 +196,7 @@ function installTgColumns() {
   for (var i = 0; i < names.length; i++) {
     var fileId = managers[names[i]].fileId;
     if (!fileId) { report.push("ℹ️ " + names[i] + ": немає файлу — пропущено"); continue; }
-    add("mgr." + names[i], names[i] + ": колонки S–X", tgSetupMgrStep_(fileId));
+    add("mgr." + names[i], names[i] + ": колонки S–Y", tgSetupMgrStep_(fileId));
   }
 
   add("btn.main", "Кнопки в головній", function () {
@@ -268,6 +282,103 @@ function tgButtonsForSheet_(sheet, startRow, idCol, btnCol, statusCol, force) {
   return tgFillButtons_(sheet, startRow, ids, btnCol, statusCol, force);
 }
 
+// ── Оновлення після появи колонки «TG ID клієнта» ─────────────────────────
+// installTgColumns() памʼятає зроблені кроки й НЕ переробить заголовки
+// вдруге — тому для однієї нової колонки є окремий короткий запуск. Він
+// нічого не ламає: додає колонку, якщо її ще немає, оновлює заголовки й
+// випадний список статусів (у ньому зʼявився «💬 У боті»).
+//
+// Запускати РАЗ, після оновлення коду.
+function upgradeTgColumns() {
+  var report = ["🔧 Додаємо колонку «" + TG_HDR_TGID + "»"];
+  try {
+    ensureTgStatusDictionary_();
+    var main = tgMainSheet_();
+    if (main) {
+      tgSetupHeaders_(main, tgMainCols_());
+      tgSetupFormat_(main, tgMainCols_());
+      report.push("✅ головна «" + MAIN_SHEET + "»");
+    }
+    var one = (typeof tg1CSheetName_ === "function") ? tg1CSheetName_() : "";
+    if (one) {
+      var sh1 = tgSS_(MAIN_FILE_ID).getSheetByName(one);
+      if (sh1) { tgSetupSheet_(sh1, tgMainCols_()); report.push("✅ аркуш «" + one + "»"); }
+    }
+  } catch (err) { report.push("⚠️ головна таблиця: " + err); }
+
+  var managers = tgManagers_();
+  for (var name in managers) {
+    var fileId = managers[name].fileId;
+    if (!fileId) continue;
+    try {
+      var ss = tgSS_(fileId);
+      var sheets = ss.getSheets();
+      for (var i = 0; i < sheets.length; i++) tgSetupSheet_(sheets[i], tgMgrCols_());
+      report.push("✅ " + name);
+    } catch (err) { report.push("⚠️ " + name + ": " + err); }
+  }
+  report.push("", "Готово. Дані в наявних рядках не чіпались — додано лише порожню колонку.");
+  Logger.log(report.join("\n"));
+}
+
+
+// ── Місток з нашою системою: налаштування й перевірка ─────────────────────
+// Разове ввімкнення. `secret` — те саме значення, що в нашій системі лежить
+// у LEADS_TG_LINK_SECRET (а якщо її немає — у LEADS_IMPORT_SECRET).
+//
+// Приклад запуску з редактора:
+//   setupEcoBridge("сюди-значення-секрета")
+function setupEcoBridge(secret) {
+  var s = (secret || "").toString().trim();
+  if (s.length < 16) {
+    Logger.log("❌ Потрібен секрет щонайменше на 16 символів — те саме значення, " +
+               "що в нашій системі (LEADS_TG_LINK_SECRET або LEADS_IMPORT_SECRET).");
+    return;
+  }
+  tgSetProp_("TG_LINK_SECRET", s);
+  tgSetProp_("TG_CLIENT_LINK", "eco");
+  Logger.log("✅ Місток увімкнено. Далі — tgEcoCheck() для перевірки.");
+  tgEcoCheck();
+}
+
+// Що ще лишилось зробити руками. Пише простою мовою, без здогадок.
+function tgEcoCheck() {
+  var L = ["🔗 МІСТОК З НАШОЮ СИСТЕМОЮ", ""];
+  var secret = tgLinkSecret_();
+  L.push(secret ? "✅ Секрет підпису заданий" :
+    "❌ Немає секрета. Запустіть setupEcoBridge(\"значення\") — те саме значення, " +
+    "що в нашій системі (LEADS_TG_LINK_SECRET або LEADS_IMPORT_SECRET).");
+
+  var mode = tgClientLinkMode_();
+  L.push(mode === "eco" ? "✅ Кнопка веде на бота системи"
+                        : "ℹ️ Режим посилання: " + mode + " (щоб змінити — TG_CLIENT_LINK = eco)");
+
+  L.push("ℹ️ Бот системи: @" + tgEcoBotUsername_() +
+         " (змінюється властивістю TG_ECO_BOT)");
+
+  var sample = tgEcoDeepLink_("LTEX-20260101-0001");
+  L.push(sample ? "✅ Приклад посилання: " + sample : "❌ Посилання не будується — див. вище");
+
+  var url = "";
+  try { url = ScriptApp.getService().getUrl(); } catch (err) { url = ""; }
+  L.push("", "Що має бути в НАШІЙ системі (.env):");
+  L.push("   LEADS_SHEETS_WEBHOOK_URL = " + (url || "<адреса цього веб-застосунку>"));
+  L.push("   LEADS_TG_LINK_SECRET     = той самий секрет");
+  L.push("   TELEGRAM_CHANNEL_USERNAME = нік каналу (напр. L_TEX)");
+  L.push("", "І в Telegram:");
+  L.push("   · бот @" + tgEcoBotUsername_() + " — АДМІН каналу (інакше про підписку ми не дізнаємось);");
+  L.push("   · вебхук перереєстрований скриптом register-telegram-webhook.ts");
+  L.push("     (він просить подію chat_member явно — без неї підписки не доїжджають).");
+
+  if (tgProp_("TG_BOT_TOKEN") && tgProp_("TG_UPDATE_MODE") === "poll") {
+    L.push("", "⚠️ Цей скрипт досі опитує свого бота (TG_UPDATE_MODE = poll).");
+    L.push("   Якщо це ТОЙ САМИЙ бот, що й у системі, — опитування треба вимкнути:");
+    L.push("   вебхук і опитування на одному боті не працюють разом.");
+  }
+  Logger.log(L.join("\n"));
+}
+
+
 // Почати встановлення спочатку (напр. після додавання нового менеджера
 // зайве — installTgColumns() і так пропускає зроблене; потрібно лише
 // якщо треба переоформити все наново)
@@ -279,11 +390,13 @@ function resetTgInstall() {
 // Набори колонок головної таблиці та файлу менеджера
 function tgMainCols_() {
   return {btn: TG_MAIN_BTN, status: TG_MAIN_STATUS, date: TG_MAIN_DATE,
-          link: TG_MAIN_LINK, nick: TG_MAIN_NICK, joined: TG_MAIN_JOINED};
+          link: TG_MAIN_LINK, nick: TG_MAIN_NICK, joined: TG_MAIN_JOINED,
+          tgid: TG_MAIN_TGID, last: TG_MAIN_LAST};
 }
 function tgMgrCols_() {
   return {btn: TG_MGR_BTN, status: TG_MGR_STATUS, date: TG_MGR_DATE,
-          link: TG_MGR_LINK, nick: TG_MGR_NICK, joined: TG_MGR_JOINED};
+          link: TG_MGR_LINK, nick: TG_MGR_NICK, joined: TG_MGR_JOINED,
+          tgid: TG_MGR_TGID, last: TG_MGR_LAST};
 }
 
 // «Лід: LTEX-…» / «1С: 4741» у колонці дублів → ID другого рядка клієнта
@@ -309,15 +422,16 @@ function tgFormatRows_(sheet, hdrRow) {
 function tgSetupHeaders_(sheet, cols) {
   var hdrRow = tgHeaderRow_(sheet);
 
-  if (sheet.getMaxColumns() < cols.joined) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), cols.joined - sheet.getMaxColumns());
+  if (sheet.getMaxColumns() < cols.last) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), cols.last - sheet.getMaxColumns());
   }
 
   // Заголовки — у стилі сусідньої колонки
   var sample = sheet.getRange(hdrRow, Math.max(1, cols.btn - 1));
   var bg = sample.getBackground(), fc = sample.getFontColor();
-  sheet.getRange(hdrRow, cols.btn, 1, 6)
-       .setValues([[TG_HDR_BTN, TG_HDR_STATUS, TG_HDR_DATE, TG_HDR_LINK, TG_HDR_NICK, TG_HDR_JOINED]])
+  sheet.getRange(hdrRow, cols.btn, 1, 7)
+       .setValues([[TG_HDR_BTN, TG_HDR_STATUS, TG_HDR_DATE, TG_HDR_LINK,
+                    TG_HDR_NICK, TG_HDR_JOINED, TG_HDR_TGID]])
        .setFontWeight("bold").setBackground(bg).setFontColor(fc)
        .setWrap(true).setVerticalAlignment("middle");
 
@@ -327,6 +441,7 @@ function tgSetupHeaders_(sheet, cols) {
   sheet.setColumnWidth(cols.link,   230);
   sheet.setColumnWidth(cols.nick,   170);
   sheet.setColumnWidth(cols.joined, 140);
+  sheet.setColumnWidth(cols.tgid,   130);
   return hdrRow;
 }
 
@@ -344,7 +459,7 @@ function tgSetupFormat_(sheet, cols) {
 
   // Якщо зверху є обʼєднана «шапка» — розтягуємо на нові колонки
   if (typeof extendTitleMerges_ === "function") {
-    try { extendTitleMerges_(sheet, cols.joined, hdrRow); } catch (err) { Logger.log("tgSetupSheet_ merge: " + err); }
+    try { extendTitleMerges_(sheet, cols.last, hdrRow); } catch (err) { Logger.log("tgSetupSheet_ merge: " + err); }
   }
 }
 
@@ -373,6 +488,9 @@ function tgConditionalFormat_(sheet, cols, hdrRow) {
 
     rules.push(SpreadsheetApp.newConditionalFormatRule()
       .whenTextStartsWith("✅").setBackground("#d9ead3").setFontColor("#0b6b3a")
+      .setRanges([range]).build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenTextStartsWith("💬").setBackground("#fff2cc").setFontColor("#7f6000")
       .setRanges([range]).build());
     rules.push(SpreadsheetApp.newConditionalFormatRule()
       .whenTextStartsWith("👤").setBackground("#c9e5ff").setFontColor("#0b4a7a")
@@ -597,6 +715,11 @@ function handleTgClick(e) {
     // Пінг для підігріву контейнера — відповідаємо ДО будь-яких таблиць
     if (p.ping === "1" || p.a === "ping") return ContentService.createTextOutput("pong");
 
+    // Подія від бота нашої системи: «клієнт відкрив бота» / «підписався на
+    // канал». Приходить БЕЗ ?t= (його знає лише кнопка в таблиці) — замість
+    // нього підпис спільним секретом, див. tgEcoEvent_.
+    if (p.act === "start" || p.act === "join") return tgEcoEvent_(p);
+
     // Дані для статичної сторінки на GitHub Pages
     if (p.fmt === "json" || p.a === "tgjson") return handleTgJson_(p);
 
@@ -671,7 +794,7 @@ function tgJsonPayload_(r) {
     ok: true, id: r.id, name: r.name, phone: r.phone, intl: tgIntlPhone_(r.phone),
     region: r.region, city: r.city, manager: r.manager, interest: r.interest,
     link: r.link, personal: !!r.personal, noLink: !!r.noLink, viaBot: !!r.viaBot,
-    publicChannel: !!r.publicChannel,
+    viaEco: !!r.viaEco, publicChannel: !!r.publicChannel,
     linkWhy: r.linkWhy || "", notSent: !!r.notSent,
     repeat: !!r.repeat, sentAt: r.sentAt, nick: r.nick || "", joinedAt: r.joinedAt || "",
     absent: tgNoAppsFrom_(r.comment), msg: tgMessageText_(r), ms: r.ms || "",
@@ -681,6 +804,104 @@ function tgJsonPayload_(r) {
   };
 }
 
+// ── Події від бота нашої системи (ltex-ecosystem) ──────────────────────────
+// Клієнт відкрив бота за посиланням з таблиці → act=start (нік + Telegram-id).
+// Клієнт підписався на канал → act=join (дата приєднання).
+//
+// Чому це взагалі можливо у ПУБЛІЧНОМУ каналі. Запрошення там не відповідає
+// на питання «хто підписався»: Telegram відкриває канал напряму й події
+// приходять без запрошення. Але Telegram-id людини ми знаємо ще ДО підписки —
+// вона приходить у бота за міткою з таблиці. Далі бот ловить подію про вступ
+// і звіряє id. Саме тому крок «через бота» тут не зайвий, а єдиний робочий.
+//
+// Підпис обовʼязковий: адреса скрипта відкрита інтернету, і без нього
+// будь-хто ставив би чужим рядкам «Приєднався».
+function tgEcoEvent_(p) {
+  var out;
+  try {
+    var act    = tgStr_(p.act);
+    var id     = tgStr_(p.id);
+    var tgId   = tgStr_(p.tg);
+    var secret = tgLinkSecret_();
+    if (!secret) {
+      out = {ok: false, error: "не задано TG_LINK_SECRET"};
+    } else if (!id || !tgId) {
+      out = {ok: false, error: "потрібні id і tg"};
+    } else if (tgStr_(p.sig) !== tgHmac12_("crm-lead-event", act + "|" + id + "|" + tgId, secret)) {
+      out = {ok: false, error: "підпис не збігається"};
+    } else {
+      out = {ok: true, applied: tgApplyEcoEvent_(act, id, tgId, tgStr_(p.nick), tgStr_(p.name))};
+    }
+  } catch (err) {
+    Logger.log("tgEcoEvent_: " + err);
+    out = {ok: false, error: String(err)};
+  }
+  return ContentService.createTextOutput(JSON.stringify(out))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// Записує подію в рядок клієнта. Повертає коротке слово про те, що зробили —
+// його видно і в логах нашої системи, і в ручному виклику з редактора.
+//
+// Правила навмисно консервативні:
+//   · ручний вибір менеджера («🚫 Не потрібно», «❌ Відмовився») не чіпаємо —
+//     це його рішення про рядок, а не факт про канал;
+//   · дату приєднання не переписуємо: перша підписка лишається першою;
+//   · дату надсилання не вигадуємо — інакше в рядку зʼявиться «надіслано»
+//     там, де менеджер кнопку не тиснув;
+//   · нік та id пишемо завжди: це нова інформація незалежно від статусу.
+function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
+  var sheet = tgSheetForId_(id);
+  if (!sheet) return "no-sheet";
+  var row = tgFindRow_(sheet, COL.ID, DATA_START, id);
+  if (row === -1) return "not-found";
+
+  var d     = sheet.getRange(row, 1, 1, TG_MAIN_LAST).getValues()[0];
+  var cur   = tgStr_(d[TG_MAIN_STATUS - 1]);
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm");
+  var label = nick ? "@" + nick.replace(/^@/, "") : (fullName || "");
+
+  var next = cur;
+  if (tgStatusIsOurs_(cur)) {
+    if (act === "join") next = TG_STATUS_JOINED;
+    else if (cur !== TG_STATUS_JOINED) next = TG_STATUS_BOT;
+  }
+
+  var vals = [next,
+              d[TG_MAIN_DATE - 1],
+              tgStr_(d[TG_MAIN_LINK - 1]),
+              label || tgStr_(d[TG_MAIN_NICK - 1]),
+              act === "join" ? (d[TG_MAIN_JOINED - 1] || stamp) : d[TG_MAIN_JOINED - 1],
+              tgId];
+  sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+
+  try {
+    sheet.getRange(row, TG_MAIN_NICK).setNote(
+      "Telegram id: " + tgId +
+      (fullName ? "\nІмʼя в Telegram: " + fullName : "") +
+      "\n" + (act === "join" ? "Підписався на канал: " : "Відкрив бота: ") + stamp);
+  } catch (err) { Logger.log("tgApplyEcoEvent_ note: " + err); }
+
+  // Нік дублюємо в «рідну» колонку Telegram, якщо вона ще порожня — звіти й
+  // обдзвін дивляться саме туди.
+  try {
+    if (label && !tgStr_(d[COL.TG - 1])) sheet.getRange(row, COL.TG).setValue(label);
+  } catch (err) { Logger.log("tgApplyEcoEvent_ TG: " + err); }
+
+  var manager = tgStr_(d[COL.MANAGER - 1]);
+  tgSyncToManager_(manager, id, vals);
+  var twin = tgTwinFromDups_(tgStr_(d[COL.DUPS - 1]));
+  if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, vals);
+
+  tgLogAppend_([new Date(), id, tgStr_(d[COL.NAME - 1]), tgStr_(d[COL.PHONE - 1]),
+                tgStr_(d[COL.REGION - 1]), manager, tgStr_(d[TG_MAIN_LINK - 1]),
+                "бот системи",
+                (act === "join" ? "приєднався: " : "відкрив бота: ") + (label || tgId)]);
+
+  return next === cur ? "noted" : "status:" + next;
+}
+
+
 // Друга частина роботи — коли сторінка вже перед очима менеджера
 function tgFinishFromPage_(id, hintRow, linkRow, stamp) {
   try {
@@ -688,10 +909,10 @@ function tgFinishFromPage_(id, hintRow, linkRow, stamp) {
     var row   = tgFindRow_(sheet, COL.ID, DATA_START, id, hintRow);
     if (row === -1) return "not-found";
 
-    var d    = sheet.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+    var d    = sheet.getRange(row, 1, 1, TG_MAIN_LAST).getValues()[0];
     var vals = [tgStr_(d[TG_MAIN_STATUS - 1]), tgStr_(d[TG_MAIN_DATE - 1]),
                 tgStr_(d[TG_MAIN_LINK - 1]),   tgStr_(d[TG_MAIN_NICK - 1]),
-                tgStr_(d[TG_MAIN_JOINED - 1])];
+                tgStr_(d[TG_MAIN_JOINED - 1]), tgStr_(d[TG_MAIN_TGID - 1])];
     var manager = tgStr_(d[COL.MANAGER - 1]);
 
     tgSyncToManager_(manager, id, vals);
@@ -732,7 +953,7 @@ function markTgSent_(id, source, hintRow) {
     var row = tgFindRow_(main, COL.ID, DATA_START, id, hintRow);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено в таблиці."};
 
-    var d = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+    var d = main.getRange(row, 1, 1, TG_MAIN_LAST).getValues()[0];
     lap("рядок");
     var info = {
       ok: true, id: id, row: row,
@@ -768,6 +989,7 @@ function markTgSent_(id, source, hintRow) {
     info.linkRow   = res.row;
     info.personal  = !!res.personal;
     info.viaBot    = !!res.viaBot;
+    info.viaEco    = !!res.viaEco;
     info.publicChannel = !!res.publicChannel;
     info.noLink    = !res.link;
     info.repeat    = repeat;
@@ -792,7 +1014,7 @@ function markTgSent_(id, source, hintRow) {
     var vals = [repeat ? prevStatus : TG_STATUS_SENT,
                 repeat ? d[TG_MAIN_DATE - 1] : stamp,
                 info.link || prevLink,
-                d[TG_MAIN_NICK - 1], d[TG_MAIN_JOINED - 1]];
+                d[TG_MAIN_NICK - 1], d[TG_MAIN_JOINED - 1], d[TG_MAIN_TGID - 1]];
     main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
     lap("статус");
     var note = "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source +
@@ -914,14 +1136,15 @@ function tgUndo_(id) {
     var main = tgSheetForId_(id);
     var row  = tgFindRow_(main, COL.ID, DATA_START, id);
     if (row === -1) return {ok: false, error: "Клієнта " + id + " не знайдено."};
-    var d = main.getRange(row, 1, 1, TG_MAIN_JOINED).getValues()[0];
+    var d = main.getRange(row, 1, 1, TG_MAIN_LAST).getValues()[0];
     var info = {ok: true, id: id, name: tgStr_(d[COL.NAME - 1]), manager: tgStr_(d[COL.MANAGER - 1])};
 
     // Нік і дату приєднання не чіпаємо: клієнт справді в каналі
     main.getRange(row, TG_MAIN_STATUS, 1, 2).setValues([["", ""]]);
     try { main.getRange(row, TG_MAIN_STATUS).clearNote(); } catch (err) { Logger.log("clearNote: " + err); }
     var undoVals = ["", "", tgStr_(d[TG_MAIN_LINK - 1]),
-                    tgStr_(d[TG_MAIN_NICK - 1]), tgStr_(d[TG_MAIN_JOINED - 1])];
+                    tgStr_(d[TG_MAIN_NICK - 1]), tgStr_(d[TG_MAIN_JOINED - 1]),
+                    tgStr_(d[TG_MAIN_TGID - 1])];
     tgSyncToManager_(info.manager, id, undoVals);
     var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(main, row) : "";
     if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, undoVals);
@@ -938,7 +1161,7 @@ function tgSyncToManager_(managerName, id, vals) {
     var m = tgManagers_()[managerName];
     if (!m || !m.fileId) return;
     var sh = tgMgrSheetForId_(m.fileId, id);
-    if (!sh || sh.getMaxColumns() < TG_MGR_JOINED) return;
+    if (!sh || sh.getMaxColumns() < TG_MGR_LAST) return;
     var row = tgFindRow_(sh, 1, TG_MGR_DATA_START, id);
     if (row === -1) return;
     while (vals.length < TG_BLOCK) vals.push("");
@@ -1031,16 +1254,67 @@ function tgLinksMap_() {
 // невідомо. Тому клієнту даємо посилання на нашого бота з міткою:
 // натиснувши «Почати», він сам себе називає, а бот уже веде в канал.
 //
-// TG_CLIENT_LINK: "invite" (типово) — пряме запрошення в канал
-//                 "bot"            — посилання на бота з міткою
+// TG_CLIENT_LINK: "eco"    — бот нашої системи (типово, щойно задано TG_LINK_SECRET)
+//                 "invite" — пряме запрошення в канал
+//                 "bot"    — бот самого скрипта (старий режим, опитування)
 //
-// Типово — пряме запрошення: клієнт одразу бачить канал, зайвого кроку
-// немає. Режим "bot" надійніше звʼязує нік із клієнтом, але додає крок,
-// і відповідь бота приходить швидко лише на вебхуку — при опитуванні
-// клієнт чекає на неї до хвилини.
+// Чому типово «eco». Бот нашої системи працює на вебхуку: відповідь клієнту
+// приходить за частку секунди, а не до хвилини, як у скриптового бота на
+// опитуванні. Він же одразу кладе телефон, нік і Telegram-id у базу й
+// відкриває менеджеру чат — те, заради чого все й затівалось. Посилання при
+// цьому збирається без жодного звернення в мережу: кнопка лишається миттєвою.
+//
+// Без TG_LINK_SECRET режим «eco» неможливий (нічим підписати мітку), тому
+// типовим лишається пряме запрошення — нічого не ламається.
 function tgClientLinkMode_() {
-  var m = (tgProp_("TG_CLIENT_LINK") || "invite").toLowerCase();
-  return m === "bot" ? "bot" : "invite";
+  var raw = tgProp_("TG_CLIENT_LINK").toLowerCase();
+  if (raw === "eco")    return "eco";
+  if (raw === "bot")    return "bot";
+  if (raw === "invite") return "invite";
+  return tgLinkSecret_() ? "eco" : "invite";
+}
+
+// ── Місток з нашою системою (ltex-ecosystem) ──────────────────────────────
+// Спільний секрет: ним підписується і мітка в посиланні, і зворотний виклик
+// «клієнт у боті / підписався». У нашій системі це LEADS_TG_LINK_SECRET
+// (а без неї — LEADS_IMPORT_SECRET). Значення мусить збігатись до символу.
+function tgLinkSecret_() {
+  return tgProp_("TG_LINK_SECRET") || tgProp_("LTEX_CRM_SECRET");
+}
+
+// Імʼя бота нашої системи. Не секрет — просто щоб не зашивати намертво.
+function tgEcoBotUsername_() {
+  return (tgProp_("TG_ECO_BOT") || "ltex_second_stok_bot").replace(/^@/, "");
+}
+
+// Підпис HMAC-SHA256, урізаний до 12 символів base64url.
+// Дзеркальна реалізація — `crm-lead-link-token.ts` у нашій системі: той самий
+// алгоритм, той самий алфавіт, та сама довжина. Міняти формат можна ЛИШЕ
+// одночасно в обох місцях, інакше посилання перестануть відкриватись.
+//
+// 12 символів = рівно 9 байтів = 72 біти: підібрати перебором через Telegram
+// неможливо, а посилання лишається коротким (ліміт Telegram — 64 символи).
+function tgHmac12_(domain, value, secret) {
+  if (!secret) return "";
+  var bytes = Utilities.computeHmacSha256Signature(domain + ":" + value, secret);
+  return Utilities.base64EncodeWebSafe(bytes).substring(0, 12);
+}
+
+// Мітка рядка таблиці для deep-link: crm_<ID>_<підпис>.
+// Без підпису сусідній номер рядка вгадувався б із наявного, і сторонній
+// причепив би свій Telegram до чужого клієнта — менеджер побачив би чужий нік.
+function tgEcoPayload_(id) {
+  var clean = tgStr_(id);
+  var secret = tgLinkSecret_();
+  if (!secret || !/^[A-Za-z0-9-]{3,40}$/.test(clean)) return "";
+  return "crm_" + clean + "_" + tgHmac12_("crm-lead-link", clean, secret);
+}
+
+// Готове посилання на бота нашої системи. Жодних звернень у мережу.
+function tgEcoDeepLink_(id) {
+  var payload = tgEcoPayload_(id);
+  var user = tgEcoBotUsername_();
+  return payload && user ? "https://t.me/" + user + "?start=" + payload : "";
 }
 
 // Імʼя бота питаємо один раз і памʼятаємо: воно не змінюється.
@@ -1063,9 +1337,23 @@ function tgBotDeepLink_(id) {
 }
 
 function tgResolveLink_(info, existing) {
+  var mode = tgClientLinkMode_();
+
+  // Бот нашої системи. Посилання те саме для повторних кліків (мітка залежить
+  // лише від ID рядка), тому `existing` тут не потрібен — зайвого рядка в
+  // таблиці не зʼявиться, а клієнт може відкрити старе посилання повторно.
+  if (mode === "eco") {
+    var eco = tgEcoDeepLink_(info.id);
+    if (eco) return {link: eco, row: 0, key: tgNormRegion_(info.region),
+                     personal: true, viaBot: true, viaEco: true};
+    info.linkWhy = tgLinkSecret_()
+      ? "ID «" + info.id + "» не підходить для мітки посилання"
+      : "не задано TG_LINK_SECRET — нічим підписати мітку для бота системи";
+  }
+
   // Режим бота: жодних звернень до Telegram при кліку — посилання
   // збирається з імені бота та ID клієнта, тож сторінка відкривається швидше.
-  if (tgClientLinkMode_() === "bot") {
+  if (mode === "bot") {
     var deep = tgBotDeepLink_(info.id);
     if (deep) return {link: deep, row: 0, key: tgNormRegion_(info.region), personal: true, viaBot: true};
     info.linkWhy = "не вдалось дізнатись імʼя бота — перевірте TG_BOT_TOKEN";
@@ -1326,7 +1614,7 @@ function getTgStatsBlock_() {
     var tz   = Session.getScriptTimeZone();
     var yDay = Utilities.formatDate(new Date(Date.now() - 86400000), tz, "dd.MM.yyyy");
     var n    = lastRow - DATA_START + 1;
-    var data = main.getRange(DATA_START, 1, n, TG_MAIN_JOINED).getValues();
+    var data = main.getRange(DATA_START, 1, n, TG_MAIN_LAST).getValues();
 
     var total = 0, sent = 0, joined = 0, yest = 0;
     var byMgr = {};
@@ -1633,19 +1921,25 @@ function tgToken_(id) {
 }
 
 // «Вік» статусу для звірки таблиць: вищий виграє, однакові не чіпаємо.
-// порожньо(0) < ✅ Надіслано(1) < 🚫/❌/інші ручні(2) < 👤 Приєднався(3)
+// порожньо(0) < ✅ Надіслано(1) < 💬 У боті(2) < 🚫/❌/інші ручні(3) < 👤 Приєднався(4)
+//
+// «💬 У боті» стоїть ВИЩЕ за «Надіслано» і НИЖЧЕ за ручний вибір менеджера:
+// це факт про клієнта (він відгукнувся), але рішення менеджера «не потрібно»
+// воно перебивати не має.
 function tgRank_(status) {
   var s = tgStr_(status);
   if (!s) return 0;
-  if (s.indexOf("👤") === 0) return 3;
+  if (s.indexOf("👤") === 0) return 4;
+  if (s.indexOf("💬") === 0) return 2;
   if (s.indexOf("✅") === 0) return 1;
-  return 2;
+  return 3;
 }
 
+// Чи вважається, що посилання клієнту вже віддали (тоді клік — повторний).
 function tgIsSent_(status) {
   if (!status) return false;
   var s = status.toString().trim();
-  return s.indexOf("✅") === 0 || s.indexOf("👤") === 0;
+  return s.indexOf("✅") === 0 || s.indexOf("💬") === 0 || s.indexOf("👤") === 0;
 }
 
 function tgStr_(v) {

@@ -298,7 +298,9 @@ function render(d) {
     $("b-copy-link").hidden = true;
   } else {
     $("c-link").hidden = false;
-    $("link-title").textContent = d.viaBot
+    $("link-title").textContent = d.viaEco
+      ? "Посилання клієнта на нашого бота"
+      : d.viaBot
       ? "Персональне посилання клієнта (відкриє нашого бота)"
       : d.publicChannel
         ? "Посилання на наш Telegram-канал"
@@ -307,7 +309,11 @@ function render(d) {
           : "Унікальне посилання для області «" + (d.region || "за замовчуванням") + "»";
     $("f-link").textContent = d.link;
     var ln = $("link-note");
-    if (d.viaBot && !d.nick) {
+    if (d.viaEco && !d.nick) {
+      ln.hidden = false;
+      ln.textContent = "Клієнт натисне «Почати» — бот відповість одразу, дасть кнопку на канал, " +
+        "а нік і Telegram ID стануть у таблицю. Коли підпишеться — статус зміниться на «Приєднався».";
+    } else if (d.viaBot && !d.nick) {
       ln.hidden = false;
       ln.textContent = "Клієнт натисне «Почати» — його нік одразу стане в таблицю, " +
         "а бот сам покаже йому канал.";
@@ -351,7 +357,7 @@ function buildSend(d) {
     $("c-send").hidden = false;
     $("go-note").textContent = "У картці немає номера телефону — надішліть посилання вручну.";
     g.innerHTML = '<a class="btn btn-g" target="_blank" rel="noopener" href="' + esc(d.link) + '">' +
-      (d.viaBot ? "Перевірити посилання" : "Відкрити канал") + '</a>';
+      (d.viaBot || d.viaEco ? "Перевірити посилання" : "Відкрити канал") + '</a>';
     return;
   }
   var msgEnc = encodeURIComponent(d.msg);
@@ -362,7 +368,7 @@ function buildSend(d) {
     '<a class="btn btn-t" href="#" data-url="tg://resolve?phone=' + d.intl + '">Telegram</a>' +
     '<a class="btn btn-w" target="_blank" rel="noopener" href="https://wa.me/' + d.intl + '?text=' + msgEnc + '">WhatsApp</a>' +
     '<a class="btn btn-g" target="_blank" rel="noopener" href="' + esc(d.link) + '">' +
-      (d.viaBot ? "Перевірити посилання" : "Відкрити канал") + '</a>';
+      (d.viaBot || d.viaEco ? "Перевірити посилання" : "Відкрити канал") + '</a>';
 
   Array.prototype.forEach.call(g.querySelectorAll("a[data-url]"), function (a) {
     a.onclick = function () { return go(a.getAttribute("data-url"), d.msg); };

@@ -166,7 +166,7 @@ function sync1CRegister() {
   var reg     = tg1CRegister_();
   var regLast = reg.getLastRow();
   var regRows = regLast >= DATA_START
-    ? reg.getRange(DATA_START, 1, regLast - DATA_START + 1, TG_MAIN_JOINED).getValues() : [];
+    ? reg.getRange(DATA_START, 1, regLast - DATA_START + 1, TG_MAIN_LAST).getValues() : [];
   var byId = {};
   for (var i = 0; i < regRows.length; i++) {
     var rid = tgStr_(regRows[i][COL.ID - 1]);
@@ -212,8 +212,8 @@ function sync1CRegister() {
     var idx = byId[id];
     if (idx === undefined) {
       if (newRows.length >= TG1C_BATCH) { more++; continue; }
-      var fresh = new Array(TG_MAIN_JOINED);
-      for (var k = 0; k < TG_MAIN_JOINED; k++) fresh[k] = "";
+      var fresh = new Array(TG_MAIN_LAST);
+      for (var k = 0; k < TG_MAIN_LAST; k++) fresh[k] = "";
       fresh[COL.ID - 1] = id;
       fresh[COL.STATUS - 1] = "Очікує";
       tg1CFill_(fresh, {date: dateStr, name: tgStr_(row[c.name - 1]), cat: tgStr_(row[c.cat - 1]),
@@ -234,14 +234,14 @@ function sync1CRegister() {
   }
 
   if (changed && regRows.length) {
-    reg.getRange(DATA_START, 1, regRows.length, TG_MAIN_JOINED).setValues(regRows);
+    reg.getRange(DATA_START, 1, regRows.length, TG_MAIN_LAST).setValues(regRows);
   }
   if (newRows.length) {
     var start = Math.max(reg.getLastRow() + 1, DATA_START);
     if (reg.getMaxRows() < start + newRows.length - 1) {
       reg.insertRowsAfter(reg.getMaxRows(), start + newRows.length - 1 - reg.getMaxRows());
     }
-    reg.getRange(start, 1, newRows.length, TG_MAIN_JOINED).setValues(newRows);
+    reg.getRange(start, 1, newRows.length, TG_MAIN_LAST).setValues(newRows);
     reg.getRange(start, COL.PHONE, newRows.length, 1).setNumberFormat("@");
   }
 
@@ -292,19 +292,19 @@ function ensure1CRegisterSheet_() {
 
   var main   = tgMainSheet_();
   var hdrRow = tgHeaderRow_(main);
-  var hdrs   = main.getRange(hdrRow, 1, 1, TG_MAIN_JOINED).getValues();
+  var hdrs   = main.getRange(hdrRow, 1, 1, TG_MAIN_LAST).getValues();
 
   sh = ss.insertSheet(TG1C_SHEET);
-  if (sh.getMaxColumns() < TG_MAIN_JOINED) {
-    sh.insertColumnsAfter(sh.getMaxColumns(), TG_MAIN_JOINED - sh.getMaxColumns());
+  if (sh.getMaxColumns() < TG_MAIN_LAST) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), TG_MAIN_LAST - sh.getMaxColumns());
   }
-  sh.getRange(1, 1, 1, TG_MAIN_JOINED).merge()
+  sh.getRange(1, 1, 1, TG_MAIN_LAST).merge()
     .setValue("🏭 Клієнти з бази 1С | L-TEX — розсилка посилання на Telegram-канал")
     .setFontWeight("bold").setFontSize(13).setHorizontalAlignment("center");
-  sh.getRange(2, 1, 1, TG_MAIN_JOINED).merge()
+  sh.getRange(2, 1, 1, TG_MAIN_LAST).merge()
     .setValue("Дані тягнуться з бази 1С. Колонки менеджера і TG-блок не перезаписуються.")
     .setFontStyle("italic");
-  sh.getRange(hdrRow, 1, 1, TG_MAIN_JOINED).setValues(hdrs)
+  sh.getRange(hdrRow, 1, 1, TG_MAIN_LAST).setValues(hdrs)
     .setFontWeight("bold").setBackground("#2E6DA4").setFontColor("#FFFFFF").setWrap(true);
   sh.setFrozenRows(hdrRow);
   sh.setColumnWidth(COL.INTEREST, 260);
@@ -332,7 +332,7 @@ function sync1CToManager_(name, fileId) {
   var regLast = reg.getLastRow();
   if (regLast < DATA_START) return 0;
 
-  var all  = reg.getRange(DATA_START, 1, regLast - DATA_START + 1, TG_MAIN_JOINED).getValues();
+  var all  = reg.getRange(DATA_START, 1, regLast - DATA_START + 1, TG_MAIN_LAST).getValues();
   var mine = [];
   for (var i = 0; i < all.length; i++) {
     if (tgStr_(all[i][COL.MANAGER - 1]) === name && tgStr_(all[i][COL.ID - 1])) mine.push(all[i]);
@@ -394,7 +394,7 @@ function tg1CMainRowToMgr_(row) {
   out.push(row[15] || "");                                      // Дублі  → 16
   out.push(row[17] || "");                                      // Онов. статус → 17
   out.push(row[18] || "");                                      // Коментар     → 18
-  for (var t = TG_MAIN_STATUS - 1; t < TG_MAIN_JOINED; t++) {   // TG-блок → 19–24
+  for (var t = TG_MAIN_STATUS - 1; t < TG_MAIN_LAST; t++) {   // TG-блок → 19–25
     out.push(row[t] || "");
   }
   out.splice(TG_MGR_BTN - 1, 0, "");                            // місце під кнопку
