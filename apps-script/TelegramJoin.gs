@@ -362,7 +362,8 @@ function tgIsInChannel_(status) {
 // наше, туди пишемо вільно.
 function tgStatusIsOurs_(status) {
   var s = tgStr_(status);
-  return !s || s === TG_STATUS_SENT || s === TG_STATUS_BOT || s === TG_STATUS_JOINED;
+  return !s || s === TG_STATUS_SENT || s === TG_STATUS_BOT ||
+         s === TG_STATUS_JOINED || s === TG_STATUS_LEFT || s === TG_STATUS_BLOCKED;
 }
 
 // Проставити «Приєднався» рядку клієнта, якщо він уже в каналі

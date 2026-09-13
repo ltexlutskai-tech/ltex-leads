@@ -70,7 +70,14 @@ var TG_STATUS_SENT   = "✅ Надіслано";
 // він взагалі відгукнувся, — був би не видно в таблиці.
 var TG_STATUS_BOT    = "💬 У боті";
 var TG_STATUS_JOINED = "👤 Приєднався";
+// Клієнт вийшов з каналу. Дату приєднання при цьому НЕ стираємо: вона лишається
+// історією («був з такого-то»), а статус показує теперішнє.
+var TG_STATUS_LEFT    = "🚪 Відписався";
+// Заблокував бота — писати йому більше не можна взагалі, ні менеджеру, ні
+// розсилкою. Найважливіший зі станів: решта лише про канал.
+var TG_STATUS_BLOCKED = "⛔ Заблокував бота";
 var TG_STATUS_LIST   = [TG_STATUS_SENT, TG_STATUS_BOT, TG_STATUS_JOINED,
+                        TG_STATUS_LEFT, TG_STATUS_BLOCKED,
                         "🚫 Не потрібно", "❌ Відмовився"];
 
 // Одне натискання кнопки відкривало головну таблицю пʼять разів.
@@ -514,6 +521,12 @@ function tgConditionalFormat_(sheet, cols, hdrRow) {
       .whenTextStartsWith("👤").setBackground("#c9e5ff").setFontColor("#0b4a7a")
       .setRanges([range]).build());
     rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenTextStartsWith("🚪").setBackground("#fce5cd").setFontColor("#8a3b00")
+      .setRanges([range]).build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenTextStartsWith("⛔").setBackground("#f4cccc").setFontColor("#8a0f0f")
+      .setRanges([range]).build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
       .withCriteria(SpreadsheetApp.BooleanCriteria.CUSTOM_FORMULA,
                     ['=AND($A' + firstRow + '<>"",' + letter + firstRow + '="")'])
       .setBackground("#fff2cc").setRanges([range]).build());
@@ -792,7 +805,8 @@ function handleTgClick(e) {
     // Подія від бота нашої системи: «клієнт відкрив бота» / «підписався на
     // канал». Приходить БЕЗ ?t= (його знає лише кнопка в таблиці) — замість
     // нього підпис спільним секретом, див. tgEcoEvent_.
-    if (p.act === "start" || p.act === "join") return tgEcoEvent_(p);
+    if (p.act === "start" || p.act === "join" ||
+        p.act === "left"  || p.act === "blocked") return tgEcoEvent_(p);
 
     // Дані для статичної сторінки на GitHub Pages
     if (p.fmt === "json" || p.a === "tgjson") return handleTgJson_(p);
@@ -931,7 +945,16 @@ function tgEcoEvent_(p) {
 // працювати, навіть якщо старий файл бота колись приберуть із проєкту.
 function tgEcoStatusIsOurs_(status) {
   var s = tgStr_(status);
-  return !s || s === TG_STATUS_SENT || s === TG_STATUS_BOT || s === TG_STATUS_JOINED;
+  return !s || s === TG_STATUS_SENT || s === TG_STATUS_BOT ||
+         s === TG_STATUS_JOINED || s === TG_STATUS_LEFT || s === TG_STATUS_BLOCKED;
+}
+
+// Людською мовою, що саме сталось — для примітки в клітинці й для логу.
+function tgEcoActLabel_(act) {
+  if (act === "join")    return "Підписався на канал";
+  if (act === "left")    return "Відписався від каналу";
+  if (act === "blocked") return "Заблокував бота";
+  return "Відкрив бота";
 }
 
 function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
@@ -947,10 +970,14 @@ function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
 
   var next = cur;
   if (tgEcoStatusIsOurs_(cur)) {
-    if (act === "join") next = TG_STATUS_JOINED;
+    if (act === "join")         next = TG_STATUS_JOINED;
+    else if (act === "left")    next = TG_STATUS_LEFT;
+    else if (act === "blocked") next = TG_STATUS_BLOCKED;
     else if (cur !== TG_STATUS_JOINED) next = TG_STATUS_BOT;
   }
 
+  // Дату приєднання відписка НЕ стирає: «був з 12.09» — це історія, і саме за
+  // нею потім видно, скільки людина протрималась.
   var vals = [next,
               d[TG_MAIN_DATE - 1],
               tgStr_(d[TG_MAIN_LINK - 1]),
@@ -963,7 +990,7 @@ function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
     sheet.getRange(row, TG_MAIN_NICK).setNote(
       "Telegram id: " + tgId +
       (fullName ? "\nІмʼя в Telegram: " + fullName : "") +
-      "\n" + (act === "join" ? "Підписався на канал: " : "Відкрив бота: ") + stamp);
+      "\n" + tgEcoActLabel_(act) + ": " + stamp);
   } catch (err) { Logger.log("tgApplyEcoEvent_ note: " + err); }
 
   // Нік дублюємо в «рідну» колонку Telegram, якщо вона ще порожня — звіти й
@@ -980,7 +1007,29 @@ function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
   tgLogAppend_([new Date(), id, tgStr_(d[COL.NAME - 1]), tgStr_(d[COL.PHONE - 1]),
                 tgStr_(d[COL.REGION - 1]), manager, tgStr_(d[TG_MAIN_LINK - 1]),
                 "бот системи",
-                (act === "join" ? "приєднався: " : "відкрив бота: ") + (label || tgId)]);
+                tgEcoActLabel_(act).toLowerCase() + ": " + (label || tgId)]);
+
+  // Втрату менеджер має побачити в той самий день, а не наткнутись на неї у
+  // таблиці через тиждень: саме зараз ще є про що поговорити з клієнтом.
+  // Підписку не шлемо — вона й так видно у звіті, а зайвий шум притуплює увагу.
+  if (act === "left" || act === "blocked") {
+    try {
+      var mgr = manager ? tgManagers_()[manager] : null;
+      if (mgr && mgr.viberId && typeof sendViber === "function") {
+        sendViber(mgr.viberId,
+          (act === "left" ? "🚪 Клієнт відписався від каналу!\n\n"
+                          : "⛔ Клієнт заблокував бота!\n\n") +
+          "ПІБ: " + (tgStr_(d[COL.NAME - 1]) || "—") + "\n" +
+          "Телефон: " + (tgStr_(d[COL.PHONE - 1]) || "—") + "\n" +
+          "Нік: " + (label || "—") + "\n" +
+          "ID: " + id + "\n" +
+          "Коли: " + stamp +
+          (act === "blocked"
+            ? "\n\n⚠️ Писати йому в Telegram більше не можна — тільки Viber або дзвінок."
+            : "\n\nВарто написати, поки він ще памʼятає, чому пішов."));
+      }
+    } catch (err) { Logger.log("tgApplyEcoEvent_ viber: " + err); }
+  }
 
   return next === cur ? "noted" : "status:" + next;
 }
@@ -1700,7 +1749,7 @@ function getTgStatsBlock_() {
     var n    = lastRow - DATA_START + 1;
     var data = main.getRange(DATA_START, 1, n, TG_MAIN_LAST).getValues();
 
-    var total = 0, sent = 0, joined = 0, yest = 0;
+    var total = 0, sent = 0, joined = 0, yest = 0, quit = 0, blocked = 0;
     var byMgr = {};
     data.forEach(function (r) {
       if (!r[COL.NAME - 1] && !r[COL.PHONE - 1]) return;
@@ -1711,6 +1760,8 @@ function getTgStatsBlock_() {
       if (tgIsSent_(st)) {
         sent++; byMgr[mgr].sent++;
         if (st.indexOf("👤") === 0) joined++;
+        if (st.indexOf("🚪") === 0) quit++;
+        if (st.indexOf("⛔") === 0) blocked++;
         if (tgStr_(r[TG_MAIN_DATE - 1]).indexOf(yDay) === 0) yest++;
       } else {
         byMgr[mgr].left++;
@@ -1722,6 +1773,10 @@ function getTgStatsBlock_() {
     var out = "\n🔗 Посилання на Telegram-канал: " + sent + " з " + total + " (" + pct + "%)\n";
     out += "  Надіслано вчора: " + yest + "\n";
     if (joined) out += "  Приєдналось: " + joined + "\n";
+    // Втрати показуємо поруч із приєднаннями: інакше зростання виглядає
+    // більшим, ніж воно є насправді.
+    if (quit)    out += "  Відписались: " + quit + "\n";
+    if (blocked) out += "  Заблокували бота: " + blocked + "\n";
     var list = [];
     for (var m in byMgr) list.push({name: m, sent: byMgr[m].sent, left: byMgr[m].left});
     list.sort(function (a, b) { return b.left - a.left; });
@@ -2005,14 +2060,19 @@ function tgToken_(id) {
 }
 
 // «Вік» статусу для звірки таблиць: вищий виграє, однакові не чіпаємо.
-// порожньо(0) < ✅ Надіслано(1) < 💬 У боті(2) < 🚫/❌/інші ручні(3) < 👤 Приєднався(4)
+// порожньо(0) < ✅ Надіслано(1) < 💬 У боті(2) < 🚫/❌ ручні(3) <
+// < 👤 Приєднався(4) < 🚪 Відписався і ⛔ Заблокував(5)
 //
-// «💬 У боті» стоїть ВИЩЕ за «Надіслано» і НИЖЧЕ за ручний вибір менеджера:
-// це факт про клієнта (він відгукнувся), але рішення менеджера «не потрібно»
-// воно перебивати не має.
+// «💬 У боті» — вище за «Надіслано», але нижче за ручний вибір менеджера: це
+// факт про клієнта, а рішення «не потрібно» воно перебивати не має.
+//
+// Відписка й блокування — найвищі: це найсвіжіше, що ми про людину знаємо.
+// Повернення назад у «Приєднався» відбувається не через звірку таблиць, а
+// новою подією від Telegram, яка пише в обидві таблиці одразу.
 function tgRank_(status) {
   var s = tgStr_(status);
   if (!s) return 0;
+  if (s.indexOf("🚪") === 0 || s.indexOf("⛔") === 0) return 5;
   if (s.indexOf("👤") === 0) return 4;
   if (s.indexOf("💬") === 0) return 2;
   if (s.indexOf("✅") === 0) return 1;
@@ -2020,10 +2080,12 @@ function tgRank_(status) {
 }
 
 // Чи вважається, що посилання клієнту вже віддали (тоді клік — повторний).
+// Відписка й блокування теж сюди: посилання людина отримала, просто пішла.
 function tgIsSent_(status) {
   if (!status) return false;
   var s = status.toString().trim();
-  return s.indexOf("✅") === 0 || s.indexOf("💬") === 0 || s.indexOf("👤") === 0;
+  return s.indexOf("✅") === 0 || s.indexOf("💬") === 0 || s.indexOf("👤") === 0 ||
+         s.indexOf("🚪") === 0 || s.indexOf("⛔") === 0;
 }
 
 function tgStr_(v) {
