@@ -355,6 +355,9 @@ function setupEcoBridge(secret) {
   }
   tgSetProp_("TG_LINK_SECRET", s);
   tgSetProp_("TG_CLIENT_LINK", "eco");
+  // Той самий виклик вмикає й історію: окремо про неї ніхто б не згадав, а
+  // без адреси системи сторінка «Історія» просто мовчала б.
+  if (!tgEcoApiBase_()) tgSetProp_("TG_ECO_API", "https://new.ltex.com.ua");
   Logger.log("✅ Місток увімкнено. Далі — tgEcoCheck() для перевірки.");
   tgEcoCheck();
 }
@@ -373,6 +376,10 @@ function tgEcoCheck() {
 
   L.push("ℹ️ Бот системи: @" + tgEcoBotUsername_() +
          " (змінюється властивістю TG_ECO_BOT)");
+
+  L.push(tgEcoApiBase_()
+    ? "✅ Історія роботи з клієнтом: " + tgEcoApiBase_() + " (детальніше — tgHistCheck())"
+    : "ℹ️ Історія вимкнена. Щоб увімкнути: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
 
   var sample = tgEcoDeepLink_("LTEX-20260101-0001");
   L.push(sample ? "✅ Приклад посилання: " + sample : "❌ Посилання не будується — див. вище");
@@ -819,9 +826,16 @@ function handleTgClick(e) {
         "Запустіть у редакторі Apps Script функцію refreshTgButtonsForce() — кнопки оновляться."));
     }
 
+    // Історія роботи з клієнтом. Нічого не змінює — лише показує, тому йде
+    // ДО markTgSent_: інакше відкриття історії проставляло б «Надіслано».
+    if (p.hist === "1") return tgPage_(tgHistoryBody_(id));
+
     if (p.undo === "1") {
       var u = tgUndo_(id);
       if (!u.ok) return tgPage_(tgErrorBody_(u.error, ""));
+      // Поза tgUndo_ — там блокування рядка, а мережевий запит тримав би його
+      // всі свої секунди й сусідній клік чекав би дарма.
+      tgHistPush_(id, "Статус «" + TG_STATUS_SENT + "» скасовано", "sheet", u.manager);
       return tgPage_(tgUndoBody_(u));
     }
 
@@ -1160,13 +1174,23 @@ function markTgSent_(id, source, hintRow) {
                   info.link, source, repeat ? "повторно" : "вперше"]);
     lap("лог");
 
+    // Те саме — в історію роботи з клієнтом: система про цей натиск не знає
+    // нічим іншим, бо посилання менеджер віддає клієнту сам, поза нашими
+    // каналами. Але САМ запит сюди не ставимо: він мережевий, а між натиском
+    // і сторінкою менеджер чекає. Для кнопки його відкладаємо на tgFinishClick
+    // — рівно як синхронізацію файлу менеджера.
+    var histText = (repeat ? "Посилання надіслано повторно"
+                           : "Надіслано посилання на Telegram-канал") + " (" + source + ")";
+
     // Решту — файл менеджера і лічильник — робить tgFinishClick() уже
     // після того, як менеджер побачив сторінку. Якщо браузер закриють
     // раніше, ці дані донесе плановий tgRefreshJob (кожні 15 хв).
     if (source === "кнопка в таблиці") {
       info.deferred = {managerVals: vals, linkRow: (!repeat && res.row) ? res.row : 0,
-                       stamp: stamp, twinId: info.twinId, row: row, note: note};
+                       stamp: stamp, twinId: info.twinId, row: row, note: note,
+                       histText: histText};
     } else {
+      tgHistPush_(id, histText, "sheet", info.manager);
       try { main.getRange(row, TG_MAIN_STATUS).setNote(note); } catch (err) { Logger.log("note: " + err); }
       tgSyncToManager_(info.manager, id, vals);
       if (!repeat && res.row) tgBumpCounter_(res.row, stamp);
@@ -1184,7 +1208,7 @@ function markTgSent_(id, source, hintRow) {
 // Викликається зі сторінки одразу після її показу: дописує статус у файл
 // менеджера і збільшує лічильник видач. Винесено з doGet, щоб сторінка
 // відкривалась швидше — це найповільніші дві операції (окремий файл).
-function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId, hintRow, note) {
+function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId, hintRow, note, histText) {
   try {
     if (!id || token !== tgToken_(id)) return "bad-token";
     var main = tgSheetForId_(id);
@@ -1197,6 +1221,7 @@ function tgFinishClick(id, token, managerVals, linkRow, stamp, twinId, hintRow, 
     if (twinId && managerVals && typeof tg1CMirrorTwin_ === "function") {
       tg1CMirrorTwin_(twinId, managerVals);
     }
+    if (histText) tgHistPush_(id, histText, "sheet", manager);
     return "ok";
   } catch (err) {
     Logger.log("tgFinishClick: " + err);
@@ -1904,6 +1929,15 @@ function tgLandingBody_(r) {
     h.push('</div>');
   }
 
+  // Історія — там, де менеджер уже стоїть. Окрема кнопка в рядку коштувала б
+  // колонки на кожен рядок таблиці, а сюди він і так заходить перед кожним
+  // надсиланням — саме в момент, коли корисно знати, що з людиною вже було.
+  var hist = tgHistUrl_(r.id);
+  if (hist) {
+    h.push('<a class="btn btn-g" target="_blank" rel="noopener" href="' + tgEsc_(hist) +
+           '">📜 Історія роботи з клієнтом</a>');
+  }
+
   h.push('<p class="hint">Статус, дата і саме посилання вже записані в головну таблицю ' +
          'і в таблицю менеджера. Натиснули помилково? ' +
          '<a href="' + tgEsc_(undo) + '">Скасувати статус</a>.</p>');
@@ -1916,7 +1950,8 @@ function tgLandingBody_(r) {
            '.tgFinishClick(' + tgJson_(r.id) + ',' + tgJson_(tgToken_(r.id)) + ',' +
            tgJson_(r.deferred.managerVals) + ',' + (r.deferred.linkRow || 0) + ',' +
            tgJson_(r.deferred.stamp) + ',' + tgJson_(r.deferred.twinId || "") + ',' +
-           (r.deferred.row || 0) + ',' + tgJson_(r.deferred.note || "") + ');}catch(e){}</script>');
+           (r.deferred.row || 0) + ',' + tgJson_(r.deferred.note || "") + ',' +
+           tgJson_(r.deferred.histText || "") + ');}catch(e){}</script>');
   }
   return h.join("");
 }
@@ -1986,6 +2021,9 @@ function tgHtmlShell_(body) {
     '.btn-g{background:#1c2a3a;border:1px solid #2e4058}' +
     '.btn-v{background:#7c3aed}.btn-t{background:#229ED9}.btn-w{background:#25D366}' +
     '.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}' +
+    '.h{padding:8px 0;font-size:14px;border-bottom:1px solid #1c2a3a}' +
+    '.h:last-child{border-bottom:0}' +
+    '.h em{display:block;font-style:normal;font-size:11px;color:#6b8aaa;margin-bottom:2px}' +
     '.hint{font-size:12px;color:#6b8aaa;text-align:center;padding:0 8px}' +
     '.note{font-size:12px;color:#6b8aaa;margin:8px 0 0}' +
     '.note a{color:#60a5fa}' +
@@ -2610,4 +2648,317 @@ function testTgSetup() {
 
   Logger.log(out.join("\n"));
   return out.join("\n");
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  15. ІСТОРІЯ РОБОТИ З КЛІЄНТОМ                           ║
+// ╚══════════════════════════════════════════════════════════╝
+//
+// Навіщо. Досі кожна система памʼятала своє й нічого — цілком. Таблиця
+// тримала ОСТАННІЙ статус у клітинці: змінився — попереднього більше немає.
+// Наша система памʼятала заявку, дзвінки й замовлення. Бот — тред переписки.
+// На питання «а що взагалі було з цим клієнтом?» відповіді не було ніде, і
+// менеджер, який брав чужого клієнта, починав з чистого аркуша.
+//
+// Рішення: журнал ОДИН, і він у нашій системі — там для нього вже є стрічка
+// в картці ліда й картці клієнта, з авторами, фільтрами й переписко́ю. Таблиця
+// в нього ПИШЕ (те, чого система не бачить: натиск «📨 Надіслати», ручна зміна
+// статусу, зміна менеджера) і з нього ЧИТАЄ (сторінка «Історія» по кнопці).
+//
+// Другий журнал у таблиці не заводимо свідомо: два журнали завжди розходяться,
+// і за півроку ніхто не скаже, який з них правильний.
+//
+// Якщо адреси системи немає — усе працює як раніше, просто без історії.
+
+var TG_HIST_LIMIT = 60;   // скільки записів показуємо на сторінці
+
+// Адреса нашої системи (без хвостового «/»). Порожньо — місток історії вимкнено.
+//
+// Третій варіант — LTEX_CRM_URL: у ньому вже лежить адреса містка лідів
+// (`https://…/api/leads/import`), і база в неї та сама. Якщо її не брати,
+// одну й ту саму адресу довелось би тримати у двох властивостях — а розійшлись
+// би вони рівно тоді, коли домен зміниться й про другу ніхто не згадає.
+function tgEcoApiBase_() {
+  var raw = tgProp_("TG_ECO_API") || tgProp_("LTEX_API_URL");
+  if (!raw) raw = tgProp_("LTEX_CRM_URL").replace(/\/api\/leads\/import\/?$/i, "");
+  return raw ? raw.replace(/\/+$/, "") : "";
+}
+
+// Ключ для /api/leads/history. У системі це LEADS_IMPORT_SECRET.
+// Запасний варіант — секрет підпису посилань: у більшості налаштувань це те
+// саме значення, і тоді нічого окремо заводити не треба.
+function tgEcoApiSecret_() {
+  return tgProp_("TG_API_SECRET") || tgLinkSecret_();
+}
+
+
+function tgHistEnabled_() {
+  return Boolean(tgEcoApiBase_() && tgEcoApiSecret_());
+}
+
+// Пише подію таблиці в історію клієнта. Best-effort: якщо система лежить —
+// мовчки йдемо далі. Історія цінна, але не ціною того, що менеджер не зможе
+// надіслати запрошення.
+function tgHistPush_(id, text, kind, managerName) {
+  try {
+    if (!tgHistEnabled_()) return false;
+    var clean = tgStr_(id);
+    if (!clean || !tgStr_(text)) return false;
+
+    var res = UrlFetchApp.fetch(tgEcoApiBase_() + "/api/leads/history", {
+      method: "post",
+      contentType: "application/json",
+      headers: {"x-leads-secret": tgEcoApiSecret_()},
+      payload: JSON.stringify({
+        externalId: clean,
+        text: tgStr_(text),
+        kind: kind || "sheet",
+        managerName: tgStr_(managerName) || undefined
+      }),
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+    var code = res.getResponseCode();
+    if (code !== 200) Logger.log("tgHistPush_: код " + code + " для " + clean);
+    return code === 200;
+  } catch (err) { Logger.log("tgHistPush_: " + err); return false; }
+}
+
+// Читає стрічку історії з системи. Повертає {ok, rows, why}.
+function tgHistFetch_(id) {
+  try {
+    if (!tgHistEnabled_()) {
+      return {ok: false, rows: [], why: "Місток історії не налаштовано (TG_ECO_API)."};
+    }
+    var url = tgEcoApiBase_() + "/api/leads/history?externalId=" + encodeURIComponent(tgStr_(id));
+    var res = UrlFetchApp.fetch(url, {
+      headers: {"x-leads-secret": tgEcoApiSecret_()},
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+    if (res.getResponseCode() !== 200) {
+      return {ok: false, rows: [], why: "Система відповіла кодом " + res.getResponseCode() + "."};
+    }
+    var j = JSON.parse(res.getContentText() || "{}");
+    return {ok: true, rows: (j && j.rows) || [], found: Boolean(j && j.found)};
+  } catch (err) {
+    Logger.log("tgHistFetch_: " + err);
+    return {ok: false, rows: [], why: "Не вдалось звернутись до системи."};
+  }
+}
+
+// Записи цього клієнта з «_tg_log». Це наша частина історії — те, що робила
+// таблиця до містка й що система не бачить у принципі.
+function tgHistFromLog_(id) {
+  var out = [];
+  try {
+    var log = tgSS_(MAIN_FILE_ID).getSheetByName(TG_LOG_SHEET);
+    if (!log || log.getLastRow() < 2) return out;
+    var clean = tgStr_(id);
+    var rows  = log.getRange(2, 1, log.getLastRow() - 1, 9).getValues();
+    for (var i = rows.length - 1; i >= 0 && out.length < TG_HIST_LIMIT; i--) {
+      if (tgStr_(rows[i][1]) !== clean) continue;
+      var when = rows[i][0];
+      out.push({
+        at:     tgIsDate_(when) ? when : new Date(when),
+        source: tgStr_(rows[i][7]) || "таблиця",
+        note:   tgStr_(rows[i][8]),
+        who:    tgStr_(rows[i][5])
+      });
+    }
+  } catch (err) { Logger.log("tgHistFromLog_: " + err); }
+  return out;
+}
+
+// Зводить обидва джерела в один список, від найновішого.
+// Дати з таблиці — Date, з системи — ISO-рядок; рівняємо на число мілісекунд,
+// інакше сортування порівнювало б рядок з обʼєктом і порядок був би випадковим.
+function tgHistMerge_(logRows, ecoRows) {
+  var all = [];
+  (logRows || []).forEach(function (r) {
+    var label = r.note ? (r.source + ": " + r.note) : r.source;
+    all.push({ms: tgIsDate_(r.at) ? r.at.getTime() : 0,
+              at: r.at, text: label, who: r.who, from: "таблиця"});
+  });
+  (ecoRows || []).forEach(function (r) {
+    var d = new Date(r.at);
+    all.push({ms: isNaN(d.getTime()) ? 0 : d.getTime(),
+              at: d, text: tgStr_(r.body), who: tgStr_(r.author), from: "система"});
+  });
+  all.sort(function (a, b) {
+    if (b.ms !== a.ms) return b.ms - a.ms;
+    return String(a.text).localeCompare(String(b.text));
+  });
+  return all.slice(0, TG_HIST_LIMIT);
+}
+
+function tgIsDate_(d) {
+  return Boolean(d) && typeof d.getTime === "function" && !isNaN(d.getTime());
+}
+
+function tgHistStamp_(d) {
+  try {
+    return tgIsDate_(d)
+      ? Utilities.formatDate(d, Session.getScriptTimeZone(), "dd.MM.yyyy HH:mm")
+      : "—";
+  } catch (err) { return "—"; }
+}
+
+// Посилання на сторінку історії цього рядка. Той самий підпис, що й у кнопки
+// надсилання: історія — це дані клієнта, і випадковий перехожий їх не побачить.
+function tgHistUrl_(id) {
+  var base = getTgTrackUrl_();
+  return base ? base + "?a=tg&hist=1&id=" + encodeURIComponent(id) + "&t=" + tgToken_(id) : "";
+}
+
+// Сторінка «Історія роботи з клієнтом».
+function tgHistoryBody_(id) {
+  var sheet = tgSheetForId_(id);
+  var row   = sheet ? tgFindRow_(sheet, COL.ID, DATA_START, id) : -1;
+  var name = "", phone = "", manager = "", status = "";
+  if (row !== -1) {
+    var d = sheet.getRange(row, 1, 1, TG_MAIN_LAST).getValues()[0];
+    name    = tgStr_(d[COL.NAME - 1]);
+    phone   = tgStr_(d[COL.PHONE - 1]);
+    manager = tgStr_(d[COL.MANAGER - 1]);
+    status  = tgStr_(d[TG_MAIN_STATUS - 1]);
+  }
+
+  var eco = tgHistFetch_(id);
+  var rows = tgHistMerge_(tgHistFromLog_(id), eco.rows);
+
+  var h = [];
+  h.push('<div class="card"><div class="card-t">Клієнт</div>');
+  h.push(tgRow_("ПІБ", name || "—"));
+  h.push(tgRow_("Телефон", phone || "—"));
+  h.push(tgRow_("Менеджер", manager || "—"));
+  h.push(tgRow_("Статус запрошення", status || "—"));
+  h.push(tgRow_("ID", id));
+  h.push('</div>');
+
+  if (!eco.ok) {
+    // Кажемо прямо, що показана лише половина: мовчазний неповний список
+    // гірший за відсутній — менеджер вирішив би, що більше нічого й не було.
+    h.push('<div class="badge badge-rep">⚠️ Показано лише події таблиці. ' +
+           tgEsc_(eco.why || "Система недоступна.") + '</div>');
+  }
+
+  h.push('<div class="card"><div class="card-t">Історія роботи ' +
+         (rows.length ? '(' + rows.length + ')' : '') + '</div>');
+  if (!rows.length) {
+    h.push('<div class="h">Записів поки немає.</div>');
+  } else {
+    rows.forEach(function (r) {
+      h.push('<div class="h"><em>' + tgEsc_(tgHistStamp_(r.at)) + ' · ' + tgEsc_(r.from) +
+             (r.who ? ' · ' + tgEsc_(r.who) : '') + '</em>' + tgEsc_(r.text) + '</div>');
+    });
+  }
+  h.push('</div>');
+  h.push('<p class="hint">Журнал спільний: те, що бачить таблиця, і те, що бачить система.</p>');
+  return h.join("");
+}
+
+// ── Ручні зміни в таблиці ─────────────────────────────────────────────────
+// Скрипт своїх записів у таблицю НЕ бачить (edit-тригери на них не спрацьовують),
+// тож сюди доходить рівно те, що змінила людина руками. Це й потрібно: решту
+// подій система вже знає від бота й від містка лідів.
+//
+// Тригер СВІЙ, окремий від onEdit у Code.gs — Apps Script дозволяє кілька
+// обробників однієї події, і перетирати чужий не треба.
+
+function setupTgHistoryTrigger() {
+  if (!tgHistEnabled_()) {
+    Logger.log("❌ Спершу задайте адресу системи: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
+    return;
+  }
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgHistoryOnEdit") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("tgHistoryOnEdit")
+           .forSpreadsheet(tgSS_(MAIN_FILE_ID)).onEdit().create();
+  Logger.log("✅ Ручні зміни статусу й менеджера тепер потраплять в історію клієнта.");
+}
+
+function removeTgHistoryTrigger() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "tgHistoryOnEdit") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  Logger.log("Видалено тригерів історії: " + n);
+}
+
+// Які колонки варті запису в історію. Решту ігноруємо: onEdit спрацьовує на
+// кожне натискання клавіші в таблиці, і слати в систему все — це і квота, і
+// стрічка, у якій нічого не знайдеш.
+function tgHistWatchedCols_() {
+  var map = {};
+  map[TG_MAIN_STATUS] = "Статус запрошення";
+  map[COL.MANAGER]    = "Менеджер";
+  if (COL.NEW_STATUS)  map[COL.NEW_STATUS]  = "Статус обдзвону";
+  if (COL.NEW_COMMENT) map[COL.NEW_COMMENT] = "Коментар";
+  return map;
+}
+
+function tgHistoryOnEdit(e) {
+  try {
+    if (!e || !e.range || !tgHistEnabled_()) return;
+    var rng = e.range;
+    if (rng.getNumRows() !== 1 || rng.getNumColumns() !== 1) return;
+
+    var row = rng.getRow();
+    if (row < DATA_START) return;
+
+    var watched = tgHistWatchedCols_();
+    var label   = watched[rng.getColumn()];
+    if (!label) return;
+
+    var sheet = rng.getSheet();
+    var id    = tgStr_(sheet.getRange(row, COL.ID).getValue());
+    if (!id) return;
+
+    var before = tgStr_(e.oldValue);
+    var after  = tgStr_(rng.getValue());
+    if (before === after) return;
+
+    // Автор — той, хто редагує, а не той, хто записаний менеджером у рядку:
+    // саме це відрізняє «взяв чужого клієнта» від «працює свій».
+    var who = "";
+    try { who = tgStr_(e.user && e.user.getEmail && e.user.getEmail()); } catch (err) { who = ""; }
+
+    tgHistPush_(id,
+      label + ": «" + (before || "—") + "» → «" + (after || "—") + "» (вручну" +
+      (who ? ", " + who : "") + ")",
+      "sheet",
+      tgStr_(sheet.getRange(row, COL.MANAGER).getValue()));
+  } catch (err) { Logger.log("tgHistoryOnEdit: " + err); }
+}
+
+// Перевірка містка історії — окремо від tgEcoCheck(), бо тут інший ключ
+// і інша адреса, і плутати їх дорого.
+function tgHistCheck() {
+  var L = ["📜 ІСТОРІЯ РОБОТИ З КЛІЄНТОМ", ""];
+  var base = tgEcoApiBase_();
+  L.push(base ? "✅ Адреса системи: " + base
+              : "❌ Немає адреси. Виконайте: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
+  L.push(tgEcoApiSecret_() ? "✅ Ключ доступу заданий"
+                           : "❌ Немає ключа (TG_API_SECRET або TG_LINK_SECRET).");
+
+  var hooked = false;
+  try {
+    ScriptApp.getProjectTriggers().forEach(function (t) {
+      if (t.getHandlerFunction() === "tgHistoryOnEdit") hooked = true;
+    });
+  } catch (err) { Logger.log("tgHistCheck triggers: " + err); }
+  L.push(hooked ? "✅ Ручні зміни записуються (тригер стоїть)"
+                : "ℹ️ Ручні зміни НЕ записуються — запустіть setupTgHistoryTrigger()");
+
+  if (tgHistEnabled_()) {
+    var probe = tgHistFetch_("__перевірка__");
+    L.push(probe.ok ? "✅ Система відповідає на запит історії"
+                    : "❌ " + (probe.why || "Система не відповідає"));
+  }
+  L.push("", "Ключ у системі — LEADS_IMPORT_SECRET (той самий, що у містка лідів).");
+  Logger.log(L.join("\n"));
+  return L.join("\n");
 }
