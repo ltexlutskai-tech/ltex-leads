@@ -103,6 +103,8 @@ background-size:200% 100%;animation:sh 1.2s infinite;border-radius:6px;color:tra
       Позначити: <a href="#" data-app="viber">немає в Viber</a> · <a href="#" data-app="telegram">у Telegram</a>
       · <a href="#" data-app="whatsapp">у WhatsApp</a></p>
     <p class="note" id="mark-note"></p>
+    <button class="btn btn-g" id="b-mark" hidden>✅ Позначити надісланим</button>
+    <p class="note" id="sent-note"></p>
     <details id="d-fallback" hidden>
       <summary>Не відкривається діалог?</summary>
       <div class="grid" style="margin-top:8px" id="g-fallback"></div>
@@ -203,6 +205,7 @@ function copyQuiet(t) {
   return done;
 }
 function copyBtn(btn, text) {
+  markSent();
   var orig = btn.textContent;
   function ok() {
     btn.textContent = "✅ Скопійовано"; btn.classList.add("ok");
@@ -219,10 +222,43 @@ function copyBtn(btn, text) {
   if (copyQuiet(text)) ok(); else alert("Скопіюйте вручну:\n\n" + text);
 }
 
+// ── Позначка «надіслано» ────────────────────────────────────
+// Раніше статус ставило саме ВІДКРИТТЯ адреси. Так робити не можна: за
+// посиланням ходять не лише люди — сканери, антивірус у пошті, бот
+// перегляду в месенджері, префетч браузера. 14.09.2026 через це сім рядків
+// отримали «Надіслано» в одну хвилину, хоч їх ніхто не чіпав.
+// Тепер статус ставить дія: копіювання або перехід у месенджер.
+var marked = false;
+
+function markSent() {
+  if (marked) return pending;
+  marked = true;
+  var n = $("sent-note");
+  if (n) n.textContent = "…позначаю";
+  pending = api({sent: 1}).then(function (r) {
+    if (n) {
+      n.textContent = (r && r.ok)
+        ? (r.repeat ? "🔁 Уже було надіслано — дату не міняли"
+                    : "✅ Статус «Надіслано» проставлено")
+        : "⚠️ Не вдалось проставити статус";
+    }
+    var b = $("b-mark"); if (b) b.hidden = true;
+    if (r && r.ok && !r.notSent) {
+      // Друга частина (примітка, файл менеджера, лічильник) — як і раніше.
+      return api({fin: 1, lr: r.linkRow || 0, stamp: r.stamp || ""}).catch(function () {});
+    }
+  }).catch(function () {
+    marked = false;
+    if (n) n.textContent = "⚠️ Не вдалось проставити статус";
+  });
+  return pending;
+}
+
 // ── Перехід у месенджер: текст у буфер, потім діалог ─────────
 var pending = null;   // друга частина роботи; не йдемо, поки не дійде
 
 function go(url, text) {
+  markSent();
   var n = $("go-note");
   function open(copied) {
     if (n) n.textContent = copied
@@ -271,7 +307,7 @@ function render(d) {
     st.textContent = "🔁 Уже надсилали " + (d.sentAt || "");
   } else {
     st.className = "badge badge-ok";
-    st.textContent = "✅ Статус «Надіслано» проставлено автоматично";
+    st.textContent = "📨 Статус зʼявиться, щойно ви скопіюєте повідомлення або відкриєте месенджер";
   }
 
   if (d.nick) {
@@ -406,12 +442,11 @@ if (!Q.id || !Q.t) {
     if (!d.ok) { fail(d.error || "Не вдалось отримати дані", true); return; }
     render(d);
     diag(d);
-    // Друга частина роботи — коли сторінка вже перед очима. Якщо статус не
-    // ставився, доробляти нічого.
-    if (!d.notSent) {
-      pending = api({fin: 1, lr: d.linkRow || 0, stamp: d.stamp || ""})
-        .catch(function () {});
-    }
+    // Нічого не записуємо: сторінку відкрив невідомо хто. Статус поставить
+    // дія менеджера — або кнопка нижче, якщо він надіслав іншим шляхом.
+    var b = $("b-mark");
+    if (b && !d.noLink && !d.repeat) b.hidden = false;
+    if (b) b.onclick = function () { markSent(); };
   }, function () {
     fail("Немає звʼязку з таблицею. Перевірте інтернет і оновіть сторінку.", true);
   });

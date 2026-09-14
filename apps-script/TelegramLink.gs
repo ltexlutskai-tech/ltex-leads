@@ -839,7 +839,8 @@ function handleTgClick(e) {
       return tgPage_(tgUndoBody_(u));
     }
 
-    var r = markTgSent_(id, "кнопка в таблиці", p.r);
+    // Відкриття сторінки статус НЕ ставить — див. коментар до markTgSent_.
+    var r = markTgSent_(id, "кнопка в таблиці", p.r, false);
     if (!r.ok) return tgPage_(tgErrorBody_(r.error, ""));
     return tgPage_(tgLandingBody_(r));
 
@@ -870,7 +871,10 @@ function handleTgJson_(p) {
     } else if (p.noapp) {
       out = {ok: true, marked: tgMarkNoMessenger(id, p.t, p.noapp)};
     } else {
-      var r = markTgSent_(id, "кнопка в таблиці", p.r);
+      // `sent=1` шле сама сторінка, коли менеджер скопіював повідомлення або
+      // відкрив месенджер. Без цього параметра — лише дані, без запису:
+      // адресу кнопки відкривають не тільки люди.
+      var r = markTgSent_(id, "кнопка в таблиці", p.r, p.sent === "1");
       out = r.ok ? tgJsonPayload_(r) : {ok: false, error: r.error};
     }
   } catch (err) {
@@ -1090,7 +1094,22 @@ function tgFinishFromPage_(id, hintRow, linkRow, stamp) {
 // менеджерів, а всередині ще й чекає відповіді Telegram. Різні рядки
 // одне одному не заважають, а два кліки по одному рядку максимум
 // перезапишуть однакові значення.
-function markTgSent_(id, source, hintRow) {
+/**
+ * Дані рядка для сторінки і — за `commit` — запис статусу «Надіслано».
+ *
+ * ЧОМУ ДВА РЕЖИМИ. Кнопка в таблиці — звичайне посилання, і раніше сам факт
+ * ВІДКРИТТЯ цієї адреси ставив статус. Так змінювати дані не можна: GET
+ * ходять усі — сканери посилань, антивірус у пошті, бот попереднього
+ * перегляду в месенджері, префетч браузера. 14.09.2026 це й сталось: сім
+ * рядків о 06:35 в одну хвилину й ще два о 03:59 отримали «✅ Надіслано»,
+ * хоч менеджер їх не чіпав. У звіті це виглядало як зроблена робота, а
+ * клієнтам ніхто нічого не надсилав.
+ *
+ * Тому: `commit !== true` — лише читаємо (сторінка), а статус, лог, файл
+ * менеджера й історію пише лише дія менеджера на сторінці (`tgMarkSentFromPage`)
+ * або команда `/тг` у Viber. Робот дію на сторінці не відтворить.
+ */
+function markTgSent_(id, source, hintRow, commit) {
   var t0 = Date.now(), T = [];
   function lap(k) { T.push(k + "=" + (Date.now() - t0)); }
   try {
@@ -1130,7 +1149,7 @@ function markTgSent_(id, source, hintRow) {
     }
 
     // Посилання: вже видане раніше → віддаємо те саме (клієнт має на руках саме його)
-    var res = tgResolveLink_(info, prevLink);
+    var res = tgResolveLink_(info, prevLink, !commit);
     lap("посилання");
     info.link      = res.link;
     info.linkRow   = res.row;
@@ -1153,6 +1172,16 @@ function markTgSent_(id, source, hintRow) {
     // Немає посилання — немає чого надсилати. Статус не ставимо: інакше у
     // звіті буде «надіслано» там, де менеджер нічого не надіслав.
     if (!info.link && !repeat) { info.notSent = true; info.ms = T.join(" "); return info; }
+
+    // ── Межа між «показати» і «записати» ──────────────────────────────────
+    // Усе вище — читання. Усе нижче міняє таблицю, і робиться лише за
+    // прямою дією менеджера.
+    if (commit !== true) {
+      info.preview = true;
+      info.needsPersonal = !!res.needsPersonal;
+      info.ms = T.join(" ");
+      return info;
+    }
 
     // Дату й дату приєднання при повторі повертаємо В ТОМУ САМОМУ ВИГЛЯДІ,
     // як лежали в клітинці. Якщо там справжня дата, а часовий пояс таблиці
@@ -1202,6 +1231,54 @@ function markTgSent_(id, source, hintRow) {
   } catch (err) {
     Logger.log("markTgSent_: " + err);
     return {ok: false, error: "Помилка запису: " + err};
+  }
+}
+
+/** Скасування статусу зі сторінки — теж лише дією, не переходом за адресою. */
+function tgUndoFromPage(id, token) {
+  try {
+    var clean = tgStr_(id);
+    if (!clean || token !== tgToken_(clean)) return "bad-token";
+    var u = tgUndo_(clean);
+    if (!u.ok) return "error";
+    tgHistPush_(clean, "Статус «" + TG_STATUS_SENT + "» скасовано", "sheet", u.manager);
+    return "ok";
+  } catch (err) {
+    Logger.log("tgUndoFromPage: " + err);
+    return "error";
+  }
+}
+
+/**
+ * «Менеджер справді надіслав» — викликається зі сторінки `google.script.run`.
+ *
+ * Саме цей виклик, а не відкриття адреси, ставить «✅ Надіслано». Робот його
+ * не відтворить: щоб сюди потрапити, треба виконати JavaScript сторінки в
+ * сесії Google і натиснути кнопку. Токен звіряємо так само, як у кнопці.
+ *
+ * Повертає рядок для підпису під кнопкою: сторінка вже показана, і кидати
+ * винятки в неї нема сенсу.
+ */
+function tgMarkSentFromPage(id, token, hintRow) {
+  try {
+    var clean = tgStr_(id);
+    if (!clean || token !== tgToken_(clean)) return "bad-token";
+
+    var r = markTgSent_(clean, "кнопка в таблиці", hintRow, true);
+    if (!r || !r.ok) return "error";
+    if (r.notSent) return "no-link";
+
+    // Другу частину (файл менеджера, лічильник, дубль 1С, історія) робимо
+    // тут же: ми вже в окремому запиті від сторінки, чекати нікому.
+    var f = r.deferred;
+    if (f) {
+      tgFinishClick(clean, token, f.managerVals, f.linkRow, f.stamp,
+                    f.twinId, f.row, f.note, f.histText);
+    }
+    return r.repeat ? "repeat" : "ok";
+  } catch (err) {
+    Logger.log("tgMarkSentFromPage: " + err);
+    return "error";
   }
 }
 
@@ -1494,7 +1571,7 @@ function tgBotDeepLink_(id) {
   return user ? "https://t.me/" + user + "?start=" + encodeURIComponent(tgStr_(id)) : "";
 }
 
-function tgResolveLink_(info, existing) {
+function tgResolveLink_(info, existing, preview) {
   var mode = tgClientLinkMode_();
 
   // Бот нашої системи. Посилання те саме для повторних кліків (мітка залежить
@@ -1546,6 +1623,15 @@ function tgResolveLink_(info, existing) {
   if (!(ownRec && (ownRec.link || ownRec.chatId)) && typeof tgPublicChannelLink_ === "function") {
     var pub = tgPublicChannelLink_();
     if (pub) return {link: pub, row: 0, key: key, personal: false, publicChannel: true};
+  }
+
+  // Перегляд сторінки не має права СТВОРЮВАТИ запрошення в Telegram: інакше
+  // кожне відкриття адреси (людиною чи роботом) плодило б нові одноразові
+  // посилання й палило квоту. Персональне робимо лише в момент, коли менеджер
+  // справді надсилає.
+  if (preview) {
+    return {link: regionLink, row: rec ? rec.row : 0, key: key, personal: false,
+            needsPersonal: true};
   }
 
   var personal = tgPersonalLink_(info, rec);   // персональне для цього клієнта
@@ -1736,7 +1822,7 @@ function handleTgCommand(text, sender) {
       return;
     }
 
-    var r = markTgSent_(id, "бот Viber (" + ((sender && sender.name) || "—") + ")");
+    var r = markTgSent_(id, "бот Viber (" + ((sender && sender.name) || "—") + ")", 0, true);
     if (!r.ok) { sendViber(sender.id, "Помилка: " + r.error); return; }
     if (r.noLink) {
       sendViber(sender.id, "⚠️ Нема чого надсилати: " + (r.linkWhy ||
@@ -1835,11 +1921,11 @@ function tgPage_(body) {
 function tgLandingBody_(r) {
   var msg   = tgMessageText_(r);
   var intl  = tgIntlPhone_(r.phone);
-  var undo  = getTgTrackUrl_() + "?a=tg&id=" + encodeURIComponent(r.id) + "&t=" + tgToken_(r.id) + "&undo=1";
   var h = [];
 
   h.push('<div class="badge ' + (r.repeat ? 'badge-rep' : 'badge-ok') + '">' +
-         (r.repeat ? '🔁 Уже надсилали ' + tgEsc_(r.sentAt) : '✅ Статус «Надіслано» проставлено автоматично') +
+         (r.repeat ? '🔁 Уже надсилали ' + tgEsc_(r.sentAt)
+                   : '📨 Статус зʼявиться, щойно ви скопіюєте повідомлення або відкриєте месенджер') +
          '</div>');
   if (r.nick) {
     h.push('<div class="badge badge-join">👤 Клієнт уже в каналі: ' + tgEsc_(r.nick) +
@@ -1929,6 +2015,14 @@ function tgLandingBody_(r) {
     h.push('</div>');
   }
 
+  // Надіслали не з цієї сторінки (продиктували по телефону, переслали з
+  // іншого пристрою) — статус усе одно має бути. Кнопка робить те саме, що
+  // копіювання, тільки прямо.
+  if (!r.noLink) {
+    h.push('<button class="btn btn-g" onclick="mark()">✅ Позначити надісланим</button>');
+    h.push('<p class="note" id="sentnote"></p>');
+  }
+
   // Історія — там, де менеджер уже стоїть. Окрема кнопка в рядку коштувала б
   // колонки на кожен рядок таблиці, а сюди він і так заходить перед кожним
   // надсиланням — саме в момент, коли корисно знати, що з людиною вже було.
@@ -1938,21 +2032,18 @@ function tgLandingBody_(r) {
            '">📜 Історія роботи з клієнтом</a>');
   }
 
-  h.push('<p class="hint">Статус, дата і саме посилання вже записані в головну таблицю ' +
-         'і в таблицю менеджера. Натиснули помилково? ' +
-         '<a href="' + tgEsc_(undo) + '">Скасувати статус</a>.</p>');
+  // Скасування — теж дія, а не перехід за адресою: інакше той, хто обходить
+  // посилання на сторінці, знімав би статуси так само легко, як ставив їх.
+  h.push('<p class="hint">Статус зʼявляється в головній таблиці й у таблиці ' +
+         'менеджера після вашої дії. Натиснули помилково? ' +
+         '<a href="#" onclick="return undoNow()">Скасувати статус</a>.</p>');
+  h.push('<p class="note" id="undonote"></p>');
 
-  h.push('<script>var TG_ID=' + tgJson_(r.id) + ',TG_TOKEN=' + tgJson_(tgToken_(r.id)) + ';</script>');
+  h.push('<script>var TG_ID=' + tgJson_(r.id) + ',TG_TOKEN=' + tgJson_(tgToken_(r.id)) +
+         ',TG_ROW=' + (r.row || 0) + ';</script>');
 
-  // Дописуємо файл менеджера вже після показу сторінки
-  if (r.deferred) {
-    h.push('<script>try{google.script.run.withFailureHandler(function(){})' +
-           '.tgFinishClick(' + tgJson_(r.id) + ',' + tgJson_(tgToken_(r.id)) + ',' +
-           tgJson_(r.deferred.managerVals) + ',' + (r.deferred.linkRow || 0) + ',' +
-           tgJson_(r.deferred.stamp) + ',' + tgJson_(r.deferred.twinId || "") + ',' +
-           (r.deferred.row || 0) + ',' + tgJson_(r.deferred.note || "") + ',' +
-           tgJson_(r.deferred.histText || "") + ');}catch(e){}</script>');
-  }
+  // Другу частину роботи (файл менеджера, лічильник, дубль 1С, історія) тепер
+  // робить tgMarkSentFromPage — тобто лише коли менеджер справді надіслав.
   return h.join("");
 }
 
@@ -2035,7 +2126,33 @@ function tgHtmlShell_(body) {
     '<p>Статус проставляється автоматично</p></div></div>' +
     body +
     '</div><script>' +
-    'function cp(t,b){var d=b.textContent;' +
+    // Статус ставить ДІЯ менеджера, а не відкриття адреси. Робот сюди не
+    // дістанеться: треба виконати цей скрипт у сесії Google і натиснути.
+    // Викликається двічі-тричі за візит — другий раз сервер бачить «повторно»
+    // й дати не зсуває, тож захищатись від повторів тут нема від чого.
+    'function mark(done){var n=document.getElementById("sentnote");' +
+    'if(window.TG_MARKED){if(done)done();return}window.TG_MARKED=1;' +
+    'if(n)n.textContent="…позначаю";' +
+    'var fired=false;function fin(txt){if(n&&txt)n.textContent=txt;' +
+    'if(!fired&&done){fired=true;done()}}' +
+    'try{google.script.run' +
+    '.withSuccessHandler(function(res){' +
+    'fin(res==="ok"?"✅ Статус «Надіслано» проставлено":' +
+    'res==="repeat"?"🔁 Уже було надіслано — дату не міняли":' +
+    'res==="no-link"?"⚠️ Немає посилання — статус не ставили":' +
+    '"⚠️ Не вдалось проставити статус")})' +
+    '.withFailureHandler(function(){window.TG_MARKED=0;fin("⚠️ Не вдалось проставити статус")})' +
+    '.tgMarkSentFromPage(TG_ID,TG_TOKEN,TG_ROW)}' +
+    'catch(e){window.TG_MARKED=0;fin("⚠️ Недоступно")}' +
+    // Месенджер не має чекати сервер: 1.2 с — і йдемо, запит уже в дорозі.
+    'if(done)setTimeout(function(){fin("")},1200)}' +
+    'function undoNow(){var n=document.getElementById("undonote");' +
+    'if(n)n.textContent="…скасовую";' +
+    'try{google.script.run.withSuccessHandler(function(r){' +
+    'if(n)n.textContent=r==="ok"?"↩️ Статус знято":"⚠️ Не вдалось скасувати"})' +
+    '.withFailureHandler(function(){if(n)n.textContent="⚠️ Не вдалось скасувати"})' +
+    '.tgUndoFromPage(TG_ID,TG_TOKEN)}catch(e){if(n)n.textContent="⚠️ Недоступно"}return false}' +
+    'function cp(t,b){mark();var d=b.textContent;' +
     'function ok(){b.textContent="✅ Скопійовано";b.classList.add("ok");' +
     'setTimeout(function(){b.textContent=d;b.classList.remove("ok")},1800)}' +
     'try{if(navigator.clipboard&&navigator.clipboard.writeText){' +
@@ -2045,7 +2162,7 @@ function tgHtmlShell_(body) {
     'function go(url,text){var n=document.getElementById("gonote");' +
     'function open(okCopy){if(n)n.textContent=okCopy?"✅ Текст скопійовано — у чаті натисніть «Вставити»"' +
     ':"⚠️ Текст не скопіювався — натисніть «Скопіювати повідомлення» вище";' +
-    'setTimeout(function(){window.location.href=url},120)}' +
+    'mark(function(){window.location.href=url})}' +
     'try{if(navigator.clipboard&&navigator.clipboard.writeText){' +
     'navigator.clipboard.writeText(text).then(function(){open(true)},function(){open(fbq(text))})}' +
     'else{open(fbq(text))}}catch(e){open(fbq(text))}return false}' +
@@ -2224,6 +2341,99 @@ function ensureTgStatusDictionary_() {
 // tgWhoMarked("10.09.2026 23:18") — розібрати конкретну хвилину
 // tgWhoMarked("10.09.2026")       — цілий день
 // tgWhoMarked()                   — усі позначки
+/**
+ * Прибрати ХИБНІ позначки «надіслано» за конкретну хвилину.
+ *
+ * Потрібна після 14.09.2026: відкриття адреси кнопки ставило статус, тож
+ * пачки рядків отримали «✅ Надіслано» від сканерів посилань, а не від
+ * менеджерів. Знайти їх легко — у них однаковий час до хвилини.
+ *
+ * Спершу ПОКАЗУЄ і нічого не міняє. Прибирає лише з другим аргументом:
+ *   tgClearMarksAt("14.09.2026 06:35")        — подивитись
+ *   tgClearMarksAt("14.09.2026 06:35", true)  — прибрати
+ *
+ * Посилання в рядку лишаємо — так само, як робить «Скасувати статус». Воно
+ * нікому не зашкодить, а якщо клієнт усе ж його отримав, повторне надсилання
+ * дасть те саме.
+ */
+function tgClearMarksAt(dateText, apply) {
+  var want = tgStr_(dateText);
+  if (!want) {
+    var hint = "Вкажіть час: tgClearMarksAt(\"14.09.2026 06:35\")\n" +
+               "Подивитись, що взагалі є: tgWhoMarked()";
+    Logger.log(hint);
+    return hint;
+  }
+
+  var ss    = tgSS_(MAIN_FILE_ID);
+  var names = [MAIN_SHEET];
+  if (typeof TG1C_SHEET === "string" && ss.getSheetByName(TG1C_SHEET)) names.push(TG1C_SHEET);
+
+  var out = [(apply === true ? "Прибираю" : "ПОКАЗУЮ (нічого не міняю)") +
+             " позначки з часом «" + want + "»", ""];
+  var total = 0;
+
+  names.forEach(function (name) {
+    var sh = ss.getSheetByName(name);
+    if (!sh) return;
+    var lastRow = sh.getLastRow();
+    var n = lastRow - DATA_START + 1;
+    if (n < 1 || sh.getMaxColumns() < TG_MAIN_LAST) return;
+
+    var ids = sh.getRange(DATA_START, COL.ID,      n, 1).getValues();
+    var mgr = sh.getRange(DATA_START, COL.MANAGER, n, 1).getValues();
+    var tg  = sh.getRange(DATA_START, TG_MAIN_STATUS, n, TG_BLOCK).getValues();
+    var hit = 0;
+
+    for (var i = 0; i < n; i++) {
+      // Чіпаємо ЛИШЕ «✅ Надіслано». Клієнт, який уже в боті чи в каналі,
+      // прийшов туди сам — такий статус хибним бути не може.
+      if (tgStr_(tg[i][0]) !== TG_STATUS_SENT) continue;
+      if (tgDateStr_(tg[i][1]).indexOf(want) !== 0) continue;
+
+      var id = tgStr_(ids[i][0]);
+      total++; hit++;
+      out.push("   " + name + " · рядок " + (DATA_START + i) + " · " + (id || "—") +
+               " · " + (tgStr_(mgr[i][0]) || "—"));
+      if (apply !== true) continue;
+
+      tg[i][0] = "";
+      tg[i][1] = "";
+      try { sh.getRange(DATA_START + i, TG_MAIN_STATUS).clearNote(); }
+      catch (err) { Logger.log("tgClearMarksAt note: " + err); }
+
+      var vals = [];
+      for (var v = 0; v < TG_BLOCK; v++) vals.push(tg[i][v]);
+      tgSyncToManager_(tgStr_(mgr[i][0]), id, vals);
+      var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(sh, DATA_START + i) : "";
+      if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, vals);
+      tgLogAppend_([new Date(), id, tgStr_(sh.getRange(DATA_START + i, COL.NAME).getValue()),
+                    "", "", tgStr_(mgr[i][0]), "", "чищення",
+                    "хибна позначка за " + want + " — знято"]);
+      tgHistPush_(id, "Хибну позначку «" + TG_STATUS_SENT + "» знято (ніхто не надсилав)",
+                  "sheet", tgStr_(mgr[i][0]));
+    }
+
+    if (hit && apply === true) {
+      sh.getRange(DATA_START, TG_MAIN_STATUS, n, TG_BLOCK).setValues(tg);
+    }
+  });
+
+  out.push("");
+  if (!total) {
+    out.push("Нічого не знайдено. Перевірте час — він має збігатись до хвилини, " +
+             "як у колонці «Дата надсилання TG».");
+  } else if (apply === true) {
+    out.push("✅ Знято позначок: " + total + ". Кнопки повернуться до «📨 Надіслати» " +
+             "після найближчої звірки (або запустіть refreshTgButtons()).");
+  } else {
+    out.push("Знайдено: " + total + ". Щоб прибрати — tgClearMarksAt(\"" + want + "\", true)");
+  }
+
+  Logger.log(out.join("\n"));
+  return out.join("\n");
+}
+
 function tgWhoMarked(dateText) {
   var want = tgStr_(dateText);
   var out  = ["Шукаю позначки «надіслано»" + (want ? " з датою «" + want + "»" : "") + "\n"];
