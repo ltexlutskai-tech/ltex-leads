@@ -65,7 +65,7 @@ background-size:200% 100%;animation:sh 1.2s infinite;border-radius:6px;color:tra
 <div class="wrap">
   <div class="hdr">
     <div class="logo">L-TEX</div>
-    <div><h1>Посилання на Telegram-канал</h1><p>Статус проставляється автоматично</p></div>
+    <div><h1>Посилання на Telegram-канал</h1><p>Статус — після вашої дії</p></div>
   </div>
 
   <div id="state" class="badge badge-wait">⏳ Записуємо статус і готуємо посилання…</div>
@@ -82,11 +82,13 @@ background-size:200% 100%;animation:sh 1.2s infinite;border-radius:6px;color:tra
     <div class="r" id="row-interest" hidden><span>Цікавить</span><b id="f-interest"></b></div>
   </div>
 
+  <!-- Показується ЛИШЕ коли посилання немає: тоді менеджер мусить це бачити.
+       Саме посилання окремою карткою не показуємо — воно останнім рядком у
+       повідомленні нижче, і два місця з тим самим посиланням дають лише зайвий
+       екран і шанс скопіювати не те. -->
   <div class="card" id="c-link" hidden>
     <div class="card-t" id="link-title">Посилання клієнта</div>
     <div class="link" id="f-link"></div>
-    <p class="note" id="link-note" hidden>Щойно клієнт перейде за ним — його нікнейм у Telegram сам зʼявиться в таблиці.</p>
-    <button class="btn btn-p" id="b-copy-link">📋 Скопіювати посилання</button>
   </div>
 
   <div class="card" id="c-msg" hidden>
@@ -331,37 +333,7 @@ function render(d) {
     $("link-title").textContent = "⚠️ Немає посилання — надсилати нічого";
     $("f-link").textContent = d.linkWhy ||
       "Додайте посилання в аркуш «🔗 TG-посилання» головної таблиці";
-    $("b-copy-link").hidden = true;
   } else {
-    $("c-link").hidden = false;
-    $("link-title").textContent = d.viaEco
-      ? "Посилання клієнта на нашого бота"
-      : d.viaBot
-      ? "Персональне посилання клієнта (відкриє нашого бота)"
-      : d.publicChannel
-        ? "Посилання на наш Telegram-канал"
-        : d.personal
-          ? "Персональне посилання цього клієнта"
-          : "Унікальне посилання для області «" + (d.region || "за замовчуванням") + "»";
-    $("f-link").textContent = d.link;
-    var ln = $("link-note");
-    if (d.viaEco && !d.nick) {
-      ln.hidden = false;
-      ln.textContent = "Клієнт натисне «Почати» — бот відповість одразу, дасть кнопку на канал, " +
-        "а нік і Telegram ID стануть у таблицю. Коли підпишеться — статус зміниться на «Приєднався».";
-    } else if (d.viaBot && !d.nick) {
-      ln.hidden = false;
-      ln.textContent = "Клієнт натисне «Почати» — його нік одразу стане в таблицю, " +
-        "а бот сам покаже йому канал.";
-    } else if (d.publicChannel) {
-      ln.hidden = false;
-      ln.textContent = "Канал публічний, тож адреса в усіх однакова. " +
-        "Нік клієнта з'явиться в таблиці лише тоді, коли він відкриє нашого бота.";
-    } else if (d.personal && !d.nick) {
-      ln.hidden = false;
-    }
-    $("b-copy-link").onclick = function () { copyBtn(this, d.link); };
-
     $("c-msg").hidden = false;
     $("f-msg").value = d.msg;
     $("b-copy-msg").onclick = function () { copyBtn(this, $("f-msg").value); };

@@ -1950,23 +1950,10 @@ function tgLandingBody_(r) {
            '<p>' + tgEsc_(r.linkWhy || ("додайте посилання для області «" + (r.region || "—") +
            "» в аркуш «" + TG_LINKS_SHEET + "» головної таблиці")) + '</p></div>');
   } else {
-    h.push('<div class="card"><div class="card-t">' +
-           (r.viaBot ? 'Персональне посилання клієнта (відкриє нашого бота)'
-                     : r.publicChannel ? 'Посилання на наш Telegram-канал'
-                     : r.personal ? 'Персональне посилання цього клієнта'
-                                  : 'Унікальне посилання для області «' + tgEsc_(r.region || "за замовчуванням") + '»') +
-           '</div>');
-    h.push('<div class="link" id="lnk">' + tgEsc_(r.link) + '</div>');
-    if (r.publicChannel) {
-      h.push('<p class="note">Канал публічний, тож адреса в усіх однакова. Нік клієнта ' +
-             'зʼявиться в таблиці лише тоді, коли він відкриє нашого бота.</p>');
-    } else if (r.personal && !r.nick) {
-      h.push('<p class="note">Щойно клієнт перейде за ним — його нікнейм у Telegram ' +
-             'сам зʼявиться в таблиці.</p>');
-    }
-    h.push('<button class="btn btn-p" onclick="cp(' + tgJs_(r.link) + ',this)">📋 Скопіювати посилання</button>');
-    h.push('</div>');
-
+    // Окремої картки з посиланням немає навмисно: воно останнім рядком у
+    // самому повідомленні (так месенджер малює картку каналу). Два місця з
+    // тим самим посиланням — це два місця, де можна скопіювати не те, і
+    // зайвий екран для менеджера, який усе одно шле повідомлення цілком.
     h.push('<div class="card"><div class="card-t">Готове повідомлення клієнту</div>');
     h.push('<textarea id="msg" rows="16">' + tgEsc_(msg) + '</textarea>');
     h.push('<button class="btn btn-p" onclick="cp(document.getElementById(\'msg\').value,this)">' +
@@ -2123,7 +2110,7 @@ function tgHtmlShell_(body) {
     '.ok{background:#10b981 !important}' +
     '</style></head><body><div class="wrap">' +
     '<div class="hdr"><div class="logo">L-TEX</div><div><h1>Посилання на Telegram-канал</h1>' +
-    '<p>Статус проставляється автоматично</p></div></div>' +
+    '<p>Статус — після вашої дії</p></div></div>' +
     body +
     '</div><script>' +
     // Статус ставить ДІЯ менеджера, а не відкриття адреси. Робот сюди не
