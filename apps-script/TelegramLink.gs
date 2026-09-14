@@ -1860,7 +1860,7 @@ function getTgStatsBlock_() {
     var n    = lastRow - DATA_START + 1;
     var data = main.getRange(DATA_START, 1, n, TG_MAIN_LAST).getValues();
 
-    var total = 0, sent = 0, joined = 0, yest = 0, quit = 0, blocked = 0;
+    var total = 0, sent = 0, joined = 0, yest = 0, quit = 0, blocked = 0, closed = 0;
     var byMgr = {};
     data.forEach(function (r) {
       if (!r[COL.NAME - 1] && !r[COL.PHONE - 1]) return;
@@ -1868,6 +1868,10 @@ function getTgStatsBlock_() {
       var mgr = tgStr_(r[COL.MANAGER - 1]) || "Без менеджера";
       if (!byMgr[mgr]) byMgr[mgr] = {sent: 0, left: 0};
       var st = tgStr_(r[TG_MAIN_STATUS - 1]);
+      // Рядок, закритий руками, з обліку виходить зовсім: він не «надісланий»,
+      // але й не «залишився». Інакше і відсоток занижений, і в менеджера
+      // вічний хвіст із клієнтів, яким канал не потрібен.
+      if (tgStatusIsManual_(st)) { total--; closed++; return; }
       if (tgIsSent_(st)) {
         sent++; byMgr[mgr].sent++;
         if (st.indexOf("👤") === 0) joined++;
@@ -1888,6 +1892,7 @@ function getTgStatsBlock_() {
     // більшим, ніж воно є насправді.
     if (quit)    out += "  Відписались: " + quit + "\n";
     if (blocked) out += "  Заблокували бота: " + blocked + "\n";
+    if (closed)  out += "  Не потрібно / відмовились: " + closed + "\n";
     var list = [];
     for (var m in byMgr) list.push({name: m, sent: byMgr[m].sent, left: byMgr[m].left});
     list.sort(function (a, b) { return b.left - a.left; });
@@ -2223,6 +2228,22 @@ function tgRank_(status) {
 
 // Чи вважається, що посилання клієнту вже віддали (тоді клік — повторний).
 // Відписка й блокування теж сюди: посилання людина отримала, просто пішла.
+/**
+ * Статус, який менеджер поставив РУКАМИ: «🚫 Не потрібно», «❌ Відмовився».
+ *
+ * Такий рядок закритий: бот його не перезаписує, і в звіті він не має висіти
+ * в «залишилось надіслати». Раніше висів — виходив борг, який неможливо
+ * закрити: менеджер уже вирішив, що цьому клієнту канал не потрібен, а звіт
+ * щоранку вимагав від нього надіслати.
+ *
+ * Визначаємо від протилежного — усе, що НЕ наше й не порожнє. Так новий
+ * статус у довіднику (їх додають без нас) одразу поводиться правильно.
+ */
+function tgStatusIsManual_(status) {
+  var s = tgStr_(status);
+  return Boolean(s) && !tgEcoStatusIsOurs_(s);
+}
+
 function tgIsSent_(status) {
   if (!status) return false;
   var s = status.toString().trim();
