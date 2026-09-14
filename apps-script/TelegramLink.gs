@@ -2934,8 +2934,20 @@ function tgHistFetch_(id) {
       muteHttpExceptions: true,
       followRedirects: true
     });
-    if (res.getResponseCode() !== 200) {
-      return {ok: false, rows: [], why: "Система відповіла кодом " + res.getResponseCode() + "."};
+    var code = res.getResponseCode();
+    if (code !== 200) {
+      // Код сам по собі менеджеру нічого не каже. Три відповіді означають
+      // три різні дії, і кожну треба назвати вголос.
+      var why = code === 401
+        ? "Ключ не збігся (401). У системі мають збігатись LEADS_IMPORT_SECRET " +
+          "або LEADS_TG_LINK_SECRET з тим, що тут у TG_API_SECRET / TG_LINK_SECRET."
+        : code === 404
+        ? "За адресою " + tgEcoApiBase_() + " немає /api/leads/history (404) — " +
+          "система ще не задеплоєна з новим кодом."
+        : code === 503
+        ? "Система каже, що ключ у неї не налаштований (503): задайте LEADS_IMPORT_SECRET."
+        : "Система відповіла кодом " + code + ".";
+      return {ok: false, rows: [], why: why};
     }
     var j = JSON.parse(res.getContentText() || "{}");
     return {ok: true, rows: (j && j.rows) || [], found: Boolean(j && j.found)};
