@@ -156,7 +156,7 @@ function tgCollectStats_(period) {
           ? Utilities.formatDate(from, tz, "dd.MM.yyyy")
           : Utilities.formatDate(from, tz, "dd.MM") + "–" +
             Utilities.formatDate(new Date(to.getTime() - 86400000), tz, "dd.MM.yyyy")),
-    sent: 0, repeat: 0, joined: 0, orphan: 0, sentLead: 0, sent1C: 0,
+    sent: 0, repeat: 0, bot: 0, joined: 0, orphan: 0, sentLead: 0, sent1C: 0,
     byManager: {}, byRegion: {}, byManagerRegion: {},
     coverage: null, leftByManager: {}
   };
@@ -187,8 +187,16 @@ function tgCollectStats_(period) {
         st.byManagerRegion[mgr][region] = (st.byManagerRegion[mgr][region] || 0) + 1;
       } else if (note.indexOf("повторно") === 0) {
         st.repeat++; st.byManager[mgr].repeat++;
-      } else if (note.indexOf("приєднався") === 0) {
+      } else if (note.indexOf("приєднався") === 0 || note.indexOf("підписався") === 0) {
+        // Два слова навмисно. Бот системи до 18.09.2026 писав у лог
+        // «підписався на канал», і ці рядки мають рахуватись так само, як
+        // «приєднався» — інакше вчорашні вступи назавжди лишились би нулем.
         st.joined++; st.byManager[mgr].joined++; st.byRegion[region].joined++;
+      } else if (note.indexOf("відкрив бота") === 0) {
+        // Середина лійки: людина натиснула «Почати», але в канал ще не
+        // перейшла. Без цього рядка в звіті провал між «надіслано» і
+        // «приєднались» виглядав як загадка.
+        st.bot++;
       } else if (note.indexOf("не привʼязано") === 0) {
         // вступив, але за посиланням, якого немає в таблиці
         st.orphan++;
@@ -245,6 +253,7 @@ function buildTgWorkReport_(period, detailed) {
              "📨 Надіслано вперше: " + st.sent + "\n";
   if (st.sent) head += "   ліди " + st.sentLead + " · база 1С " + st.sent1C + "\n";
   if (st.repeat) head += "🔁 Повторних відкриттів: " + st.repeat + "\n";
+  if (st.bot) head += "💬 Зайшли в бота: " + st.bot + "\n";
   head += "👤 Приєднались до каналу: " + st.joined + "\n";
   if (st.sent) {
     head += "   конверсія: " + Math.round(st.joined * 100 / st.sent) + "%\n";
