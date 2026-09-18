@@ -95,6 +95,10 @@ background-size:200% 100%;animation:sh 1.2s infinite;border-radius:6px;color:tra
     <div class="card-t">Готове повідомлення клієнту</div>
     <textarea id="f-msg" rows="16"></textarea>
     <button class="btn btn-p" id="b-copy-msg">📋 Скопіювати повідомлення</button>
+    <!-- Після дзвінка менеджер часто пише клієнту своїми словами — тоді весь
+         готовий текст зайвий, потрібна сама адреса. Статус ставиться так само:
+         копіювання і є дією «віддав посилання». -->
+    <button class="btn btn-g" id="b-copy-link" style="margin-top:8px">🔗 Скопіювати лише посилання</button>
   </div>
 
   <div class="card" id="c-send" hidden>
@@ -337,6 +341,7 @@ function render(d) {
     $("c-msg").hidden = false;
     $("f-msg").value = d.msg;
     $("b-copy-msg").onclick = function () { copyBtn(this, $("f-msg").value); };
+    $("b-copy-link").onclick = function () { copyBtn(this, d.link); };
 
     buildSend(d);
   }
