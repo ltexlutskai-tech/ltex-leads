@@ -16,6 +16,29 @@
 | [`TelegramReport.gs`](TelegramReport.gs) | звіт у Viber: хто скільки надіслав і по яких областях |
 | [`Sanitize.gs`](Sanitize.gs) | захист таблиці від чужих формул — **потрібен решті файлів** |
 
+## Захист від чужих формул: що правиться в `Code.gs`
+
+`Code.gs` живе лише в самій таблиці, тож його правки тут не зберігаються — але
+вони потрібні: саме в ньому створюється рядок ліда з імʼям та інтересом, які
+пише стороння людина. Вісім рядків, усі однакові за змістом — значення перед
+записом проходить через `sheetSafe_` із `Sanitize.gs`.
+
+| Де | Було | Стало |
+| --- | --- | --- |
+| `parseAndSave` і `saveEmailLead` (двічі) | `sheet.getRange(lr, 1, 1, row.length).setValues([row]);` | `…setValues([sheetSafeRow_(row)]);` |
+| `syncToManager` | `sheet.appendRow(mgrFormatted);` | `sheet.appendRow(sheetSafeRow_(mgrFormatted));` |
+| `syncToManager` | `…setValues([mgrFormatted]);` | `…setValues([sheetSafeRow_(mgrFormatted)]);` |
+| `handleSyncFromManager` | `cell.setValue(val);` | `cell.setValue(sheetSafe_(val));` |
+| `handleNewUserStart` | `pendingSheet.appendRow([sender.id,sender.name,new Date()]);` | `pendingSheet.appendRow(sheetSafeRow_([…]));` |
+| `doPost` (журнал `_log`) | `logSheet.appendRow([token, new Date()]);` | `logSheet.appendRow(sheetSafeRow_([token, new Date()]));` |
+| `handleDictionaryCommand` | `refSheet.getRange(col+(lastUsed+1)).setValue(value);` | `…setValue(sheetSafe_(value));` |
+
+⚠️ Порядок важливий: спершу `Sanitize.gs`, потім усе інше. Інакше запис
+впаде з «sheetSafe_ is not defined».
+
+Імʼя у Viber (`sender.name`) і текст повідомлення (у токені журналу) теж
+надходять ззовні — тому вони в списку, хоч і виглядають службовими.
+
 У `Code.gs` треба додати **два рядки** (кроки 2 і 3).
 
 ---
