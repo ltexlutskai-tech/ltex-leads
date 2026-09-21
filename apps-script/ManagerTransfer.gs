@@ -309,7 +309,7 @@ function transferLeadRow_(sheet, row, opts) {
       if (val === undefined || val === "") continue;
       var cur = rowData[c.mainCol-1];
       if (cur === "" || cur === null || cur === undefined) {
-        sheet.getRange(row, c.mainCol).setValue(val);
+        sheet.getRange(row, c.mainCol).setValue(sheetSafe_(val));
         rowData[c.mainCol-1] = val;
       }
     }
@@ -450,7 +450,7 @@ function applyCarryToManagerFile_(fileId, rowId, carry) {
         var col  = parseInt(keys[k], 10);
         var cell = sheet.getRange(target, col);
         var cur  = cell.getValue();
-        if (cur === "" || cur === null) cell.setValue(carry[keys[k]]);
+        if (cur === "" || cur === null) cell.setValue(sheetSafe_(carry[keys[k]]));
       }
       return;
     }
@@ -551,7 +551,7 @@ function logTransfer_(rowId, fromName, toName, clientName, phone, note) {
     }
     // Журнал міг бути створений раніше, без 7-ї колонки
     if (!log.getRange(1, 7).getValue()) log.getRange(1, 7).setValue("Повторний запит").setFontWeight("bold");
-    log.appendRow([new Date(), rowId, fromName || "—", toName || "—", clientName || "", phone || "", note || ""]);
+    log.appendRow(sheetSafeRow_([new Date(), rowId, fromName || "—", toName || "—", clientName || "", phone || "", note || ""]));
   } catch (err) { Logger.log("logTransfer_: " + err); }
 }
 
@@ -579,7 +579,7 @@ function reassignLead(rowId, newManagerName, repeatNote) {
       var prev  = sheet.getRange(row, T.COL.INTEREST).getValue();
       prev = prev ? prev.toString().trim() : "";
       var line  = "🔁 Повторний запит " + stamp + ": " + repeatNote;
-      sheet.getRange(row, T.COL.INTEREST).setValue(prev ? prev + "\n" + line : line);
+      sheet.getRange(row, T.COL.INTEREST).setValue(sheetSafe_(prev ? prev + "\n" + line : line));
       sheet.getRange(row, T.COL.STATUS).setValue("Очікує");
     }
     sheet.getRange(row, T.COL.MANAGER).setValue(newManagerName);
@@ -761,7 +761,7 @@ function handleTransferCommand(text, sender) {
       var who   = senderName || (sender.name ? sender.name : "адмін");
       var prev  = rowData[T.COL.INTEREST-1] ? rowData[T.COL.INTEREST-1].toString().trim() : "";
       var line  = "🔁 Повторний запит " + stamp + " (" + who + "): " + note;
-      sheet.getRange(found.row, T.COL.INTEREST).setValue(prev ? prev + "\n" + line : line);
+      sheet.getRange(found.row, T.COL.INTEREST).setValue(sheetSafe_(prev ? prev + "\n" + line : line));
       // Клієнт звернувся знову — повертаємо в роботу
       sheet.getRange(found.row, T.COL.STATUS).setValue("Очікує");
     }

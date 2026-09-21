@@ -708,7 +708,7 @@ function tgRefreshAll_(force) {
             if (v === 0 || mv) rec.vals[v] = mv;   // порожнім не затираємо те, що вже є
           }
           rec.status = rec.vals[0];
-          main.getRange(rec.row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([rec.vals]);
+          main.getRange(rec.row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(rec.vals)]);
           try {
             main.getRange(rec.row, TG_MAIN_STATUS).setNote(
               "Джерело: підтягнуто з файлу менеджера (" + name + ")\nКоли: " +
@@ -717,7 +717,7 @@ function tgRefreshAll_(force) {
           up++;
         } else if (rMain > rMgr) {
           // у менеджера статус «молодший» (найчастіше порожній) → опускаємо з головної
-          sh.getRange(TG_MGR_DATA_START + j, TG_MGR_STATUS, 1, TG_BLOCK).setValues([rec.vals]);
+          sh.getRange(TG_MGR_DATA_START + j, TG_MGR_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(rec.vals)]);
           down++;
         }
         // однаковий «вік» статусу (напр. «🚫 Не потрібно» vs «❌ Відмовився») —
@@ -1013,7 +1013,7 @@ function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
               label || tgStr_(d[TG_MAIN_NICK - 1]),
               act === "join" ? (d[TG_MAIN_JOINED - 1] || stamp) : d[TG_MAIN_JOINED - 1],
               tgId];
-  sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+  sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(vals)]);
 
   try {
     sheet.getRange(row, TG_MAIN_NICK).setNote(
@@ -1025,7 +1025,7 @@ function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
   // Нік дублюємо в «рідну» колонку Telegram, якщо вона ще порожня — звіти й
   // обдзвін дивляться саме туди.
   try {
-    if (label && !tgStr_(d[COL.TG - 1])) sheet.getRange(row, COL.TG).setValue(label);
+    if (label && !tgStr_(d[COL.TG - 1])) sheet.getRange(row, COL.TG).setValue(sheetSafe_(label));
   } catch (err) { Logger.log("tgApplyEcoEvent_ TG: " + err); }
 
   var manager = tgStr_(d[COL.MANAGER - 1]);
@@ -1202,7 +1202,7 @@ function markTgSent_(id, source, hintRow, commit) {
                 repeat ? d[TG_MAIN_DATE - 1] : stamp,
                 info.link || prevLink,
                 d[TG_MAIN_NICK - 1], d[TG_MAIN_JOINED - 1], d[TG_MAIN_TGID - 1]];
-    main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+    main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(vals)]);
     lap("статус");
     var note = "Надіслав: " + (info.manager || "—") + "\nДжерело: " + source +
                "\nОстаннє відкриття: " + stamp;
@@ -1411,7 +1411,7 @@ function tgSyncToManager_(managerName, id, vals) {
     var row = tgFindRow_(sh, 1, TG_MGR_DATA_START, id);
     if (row === -1) return;
     while (vals.length < TG_BLOCK) vals.push("");
-    sh.getRange(row, TG_MGR_STATUS, 1, TG_BLOCK).setValues([vals.slice(0, TG_BLOCK)]);
+    sh.getRange(row, TG_MGR_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(vals.slice(0, TG_BLOCK))]);
   } catch (err) { Logger.log("tgSyncToManager_: " + err); }
 }
 
@@ -1757,7 +1757,7 @@ function ensureTgLogSheet_() {
 }
 
 function tgLogAppend_(row) {
-  try { ensureTgLogSheet_().appendRow(row); }
+  try { ensureTgLogSheet_().appendRow(sheetSafeRow_(row)); }
   catch (err) { Logger.log("tgLogAppend_: " + err); }
 }
 
@@ -1798,7 +1798,7 @@ function restoreTgStatusesFromLog() {
     tg[i][2] = first[id].link || tg[i][2];
     cnt++;
   }
-  if (cnt) main.getRange(DATA_START, TG_MAIN_STATUS, n, 3).setValues(tg);
+  if (cnt) main.getRange(DATA_START, TG_MAIN_STATUS, n, 3).setValues(sheetSafeRows_(tg));
   Logger.log("Відновлено рядків: " + cnt + ". Далі запустіть refreshTgButtons() для звірки з менеджерами.");
 }
 
@@ -2438,7 +2438,7 @@ function tgClearMarksAt(dateText, apply) {
     }
 
     if (hit && apply === true) {
-      sh.getRange(DATA_START, TG_MAIN_STATUS, n, TG_BLOCK).setValues(tg);
+      sh.getRange(DATA_START, TG_MAIN_STATUS, n, TG_BLOCK).setValues(sheetSafeRows_(tg));
     }
   });
 
@@ -2595,7 +2595,7 @@ function tgResetProgress(confirm) {
         }
         if (ours) {
           out.push("      з них нік у колонці «Telegram»: " + ours);
-          if (run) sh.getRange(start, COL.TG, n, 1).setValues(tgCol);
+          if (run) sh.getRange(start, COL.TG, n, 1).setValues(sheetSafeRows_(tgCol));
         }
       } catch (err) { Logger.log("колонка Telegram: " + err); }
     }

@@ -14,6 +14,7 @@
 | [`TelegramJoin.gs`](TelegramJoin.gs) | персональні посилання, приймання вступів, нікнейми |
 | [`Telegram1C.gs`](Telegram1C.gs) | клієнти з бази 1С окремим листом + звірка двох баз |
 | [`TelegramReport.gs`](TelegramReport.gs) | звіт у Viber: хто скільки надіслав і по яких областях |
+| [`Sanitize.gs`](Sanitize.gs) | захист таблиці від чужих формул — **потрібен решті файлів** |
 
 У `Code.gs` треба додати **два рядки** (кроки 2 і 3).
 
@@ -378,7 +379,12 @@ upgradeTgColumns()
 ## Встановлення
 
 ### 1. Додати два файли
-Apps Script → **＋ → Скрипт** → `TelegramLink`, потім так само `TelegramJoin`.
+Apps Script → **＋ → Скрипт** → `Sanitize`, потім `TelegramLink`, потім так
+само `TelegramJoin`.
+
+⚠️ `Sanitize.gs` додавайте ПЕРШИМ: решта файлів викликають його `sheetSafe_`
+перед кожним записом у таблицю. Без нього запис впаде з «sheetSafe_ is not
+defined».
 
 ### 2–3. Два рядки в `Code.gs` (обовʼязково)
 

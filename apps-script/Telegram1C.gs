@@ -234,14 +234,14 @@ function sync1CRegister() {
   }
 
   if (changed && regRows.length) {
-    reg.getRange(DATA_START, 1, regRows.length, TG_MAIN_LAST).setValues(regRows);
+    reg.getRange(DATA_START, 1, regRows.length, TG_MAIN_LAST).setValues(sheetSafeRows_(regRows));
   }
   if (newRows.length) {
     var start = Math.max(reg.getLastRow() + 1, DATA_START);
     if (reg.getMaxRows() < start + newRows.length - 1) {
       reg.insertRowsAfter(reg.getMaxRows(), start + newRows.length - 1 - reg.getMaxRows());
     }
-    reg.getRange(start, 1, newRows.length, TG_MAIN_LAST).setValues(newRows);
+    reg.getRange(start, 1, newRows.length, TG_MAIN_LAST).setValues(sheetSafeRows_(newRows));
     reg.getRange(start, COL.PHONE, newRows.length, 1).setNumberFormat("@");
   }
 
@@ -367,14 +367,14 @@ function sync1CToManager_(name, fileId) {
   }
 
   if (changed && cur.length) {
-    sh.getRange(TG_MGR_DATA_START, 1, cur.length, TG_MGR_JOINED).setValues(cur);
+    sh.getRange(TG_MGR_DATA_START, 1, cur.length, TG_MGR_JOINED).setValues(sheetSafeRows_(cur));
   }
   if (newRows.length) {
     var start = Math.max(sh.getLastRow() + 1, TG_MGR_DATA_START);
     if (sh.getMaxRows() < start + newRows.length - 1) {
       sh.insertRowsAfter(sh.getMaxRows(), start + newRows.length - 1 - sh.getMaxRows());
     }
-    sh.getRange(start, 1, newRows.length, TG_MGR_JOINED).setValues(newRows);
+    sh.getRange(start, 1, newRows.length, TG_MGR_JOINED).setValues(sheetSafeRows_(newRows));
     sh.getRange(start, 7, newRows.length, 1).setNumberFormat("@");
   }
 
@@ -482,7 +482,7 @@ function ensure1CAgentsSheet_() {
   }
   if (add.length) {
     add.sort(function (x, y) { return y[2] - x[2]; });
-    sh.getRange(sh.getLastRow() + 1, 1, add.length, 3).setValues(add);
+    sh.getRange(sh.getLastRow() + 1, 1, add.length, 3).setValues(sheetSafeRows_(add));
   }
   return Object.keys(count).length;
 }
@@ -603,7 +603,7 @@ function tg1CMirrorTwin_(twinId, vals) {
     if (!sheet) return;
     var row = tgFindRow_(sheet, COL.ID, DATA_START, twinId);
     if (row === -1) return;
-    sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+    sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(vals)]);
     // Примітка не копіюється разом зі значеннями, тож пишемо свою — інакше
     // рядок виглядає як статус нізвідки (див. tgWhoMarked)
     try {

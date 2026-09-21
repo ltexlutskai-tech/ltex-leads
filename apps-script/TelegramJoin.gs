@@ -301,14 +301,14 @@ function tgOnMessage_(msg) {
                 nick,
                 already ? (d[TG_MAIN_JOINED - 1] || stamp) : d[TG_MAIN_JOINED - 1],
                 tgStr_(user.id) || tgStr_(d[TG_MAIN_TGID - 1])];
-    sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+    sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(vals)]);
     try {
       sheet.getRange(row, TG_MAIN_NICK).setNote(
         "Telegram id: " + (user.id || "—") +
         "\nІмʼя в Telegram: " + [user.first_name, user.last_name].filter(String).join(" ") +
         "\nВідкрив бота: " + stamp);
     } catch (err) { Logger.log("/start note: " + err); }
-    if (!tgStr_(d[COL.TG - 1])) sheet.getRange(row, COL.TG).setValue(nick);
+    if (!tgStr_(d[COL.TG - 1])) sheet.getRange(row, COL.TG).setValue(sheetSafe_(nick));
 
     tgSyncToManager_(manager, id, vals);
     var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(sheet, row) : "";
@@ -383,7 +383,7 @@ function tgMarkJoined_(sheet, row, nick, stampIn) {
               nick || tgStr_(d[TG_MAIN_NICK - 1]),
               d[TG_MAIN_JOINED - 1] || stamp,
               d[TG_MAIN_TGID - 1]];
-  sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+  sheet.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(vals)]);
   return vals;
 }
 
@@ -469,12 +469,12 @@ function tgRememberUser_(user, clientId) {
       var ids = sh.getRange(2, 1, last - 1, 1).getValues();
       for (var i = 0; i < ids.length; i++) {
         if (String(ids[i][0]) === uid) {
-          sh.getRange(2 + i, 2, 1, 3).setValues([[tgUserLabel_(user), clientId, new Date()]]);
+          sh.getRange(2 + i, 2, 1, 3).setValues([sheetSafeRow_([tgUserLabel_(user), clientId, new Date()])]);
           return;
         }
       }
     }
-    sh.appendRow([uid, tgUserLabel_(user), clientId, new Date()]);
+    sh.appendRow(sheetSafeRow_([uid, tgUserLabel_(user), clientId, new Date()]));
   } catch (err) { Logger.log("tgRememberUser_: " + err); }
 }
 
@@ -572,7 +572,7 @@ function tgRecordJoin_(user, link, chat, kind) {
       tgStr_(d[TG_MAIN_JOINED - 1]) || stamp,   // перше приєднання не переписуємо
       (user && user.id ? tgStr_(user.id) : "") || tgStr_(d[TG_MAIN_TGID - 1])
     ];
-    main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([vals]);
+    main.getRange(row, TG_MAIN_STATUS, 1, TG_BLOCK).setValues([sheetSafeRow_(vals)]);
 
     try {
       main.getRange(row, TG_MAIN_NICK).setNote(
@@ -584,7 +584,7 @@ function tgRecordJoin_(user, link, chat, kind) {
     } catch (err) { Logger.log("tgRecordJoin_ note: " + err); }
 
     // Колонка «Telegram» (O) заповнюється, лише якщо була порожня
-    if (!tgStr_(d[COL.TG - 1])) main.getRange(row, COL.TG).setValue(nick);
+    if (!tgStr_(d[COL.TG - 1])) main.getRange(row, COL.TG).setValue(sheetSafe_(nick));
 
     tgSyncToManager_(manager, id, vals);
     var twin = (typeof tg1CTwinId_ === "function") ? tg1CTwinId_(main, row) : "";
