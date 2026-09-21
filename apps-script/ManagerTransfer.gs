@@ -715,10 +715,15 @@ function handleTransferCommand(text, sender) {
     for (var mn in managers) {
       if (managers[mn].viberId && managers[mn].viberId === sender.id) { senderName = mn; break; }
     }
-    var isAdmin = (T.ADMIN && sender.id === T.ADMIN) || T.OWNERS.indexOf(sender.id) !== -1 ||
-                  (senderName && managers[senderName] &&
-                   trCanTransferAny_(senderName, managers[senderName].role));
-    if (!isAdmin && !senderName) {
+    // Назва саме така, а не isAdmin: право стосується ВИКЛЮЧНО цієї команди.
+    // Інші команди бота («/реєстрація», «/довідник») звіряють ADMIN_VIBER_ID
+    // напряму й лишаються недоступними — людина зі списків вище отримує
+    // можливість передавати клієнтів, а не права адміністратора.
+    var canTransferAny = (T.ADMIN && sender.id === T.ADMIN) ||
+                         T.OWNERS.indexOf(sender.id) !== -1 ||
+                         (senderName && managers[senderName] &&
+                          trCanTransferAny_(senderName, managers[senderName].role));
+    if (!canTransferAny && !senderName) {
       sendViber(sender.id, "⛔ Команда доступна лише зареєстрованим менеджерам.\nНапишіть /старт для реєстрації.");
       return;
     }
@@ -740,7 +745,7 @@ function handleTransferCommand(text, sender) {
     var rowData = found.data;
     var current = rowData[T.COL.MANAGER-1] ? rowData[T.COL.MANAGER-1].toString().trim() : "";
 
-    if (!isAdmin && current && current !== senderName) {
+    if (!canTransferAny && current && current !== senderName) {
       sendViber(sender.id, "⛔ Цей контрагент закріплений за менеджером «" + current + "».\n" +
                            "Передати його може сам менеджер або адміністратор.");
       return;
