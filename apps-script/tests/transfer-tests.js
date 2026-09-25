@@ -127,7 +127,7 @@ test("бачить рядок, що лежить не в того менедже
   const env = makeEnv(BASE);
   env.sandbox.resyncManagerAssignments(true);
   const out = env.log.join("\n");
-  assert.ok(out.indexOf("Розбіжностей: 3") !== -1, out);
+  assert.ok(out.indexOf("не в того менеджера: 3") !== -1, out);
   assert.deepStrictEqual(env.files["Захарчук Олександра"], [], "перевірка не має нічого міняти");
 });
 
@@ -147,6 +147,48 @@ test("коли все збігається — мовчить і нічого н
   env.sandbox.resyncManagerAssignments(false);
   assert.ok(env.log.join("\n").indexOf("Розбіжностей немає") !== -1);
   assert.strictEqual(env.owners.length, 0);
+});
+
+test("менеджер без таблиці: не мовчимо і не крутимо це вічно", () => {
+  // Зингель Олена має клієнтів у головній, але файлу в неї немає — рядки
+  // нікуди класти. Це не «не синхронізувалось», це «бракує таблиці».
+  const env = makeEnv({
+    files: { "Зингель Олена": [], "Захарчук Олександра": [] },
+    noFile: ["Зингель Олена"],
+    main: [row("A1", "Оксана", "Зингель Олена"), row("A2", "Марія", "Зингель Олена")],
+  });
+  env.sandbox.resyncManagerAssignments(false);
+  const out = env.log.join("\n");
+  assert.ok(out.indexOf("Менеджери БЕЗ таблиці") !== -1, out);
+  assert.ok(out.indexOf("Зингель Олена — клієнтів: 2") !== -1, out);
+  // Головне: їх НЕ рахуємо за виправні, інакше вони щоразу з'їдали б ліміт
+  // і звірка ніколи не доходила б до тих, кого справді можна полагодити.
+  assert.ok(out.indexOf("Розбіжностей до виправлення: 0") !== -1, out);
+});
+
+test("клієнти того, хто без таблиці, не блокують решту", () => {
+  const files = { "Зингель Олена": [], "Гуменюк Євген": ["B1"], "Захарчук Олександра": [] };
+  const main = [row("B1", "Рома", "Захарчук Олександра")];
+  for (let i = 1; i <= 30; i++) main.push(row("Z" + i, "Клієнт " + i, "Зингель Олена"));
+  const env = makeEnv({ files, main, noFile: ["Зингель Олена"] });
+  env.sandbox.resyncManagerAssignments(false);
+  assert.deepStrictEqual(env.files["Захарчук Олександра"], ["B1"],
+    "справжня розбіжність мала виправитись, а не загубитись серед нездійсненних");
+});
+
+test("звірка відкриває лише той файл, що справді тримає рядок", () => {
+  const files = { "Гуменюк Євген": ["A1"], "Захарчук Олександра": [],
+                  "Максимюк Анна": [], "Дунас Богдан": [] };
+  const env = makeEnv({ files, main: [row("A1", "Рома", "Захарчук Олександра")] });
+  env.sandbox.resyncManagerAssignments(true);   // прогріли: прочитали всі файли
+  env.resetOpens();
+  env.sandbox.resyncManagerAssignments(false);
+  // Після читання файлів для звірки нам уже відомо, хто тримає рядок, тож
+  // сам перенос не має знову перебирати чужі таблиці.
+  const opened = env.openCalls.filter((id) => id.startsWith("file-"));
+  const afterScan = opened.slice(4);   // перші 4 — то читання для самої звірки
+  assert.ok(!afterScan.includes("file-Максимюк Анна"),
+    "чужі файли під замком відкривати не треба: " + afterScan.join(", "));
 });
 
 test("нічийний рядок без менеджера не вважається розбіжністю", () => {

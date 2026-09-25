@@ -46,7 +46,8 @@ function makeEnv(opts = {}) {
     getRange: (row, col, nr, nc) => ({
       getValues() {
         return Object.keys(files).map((n) => {
-          const full = [n, "менеджер", "viber-" + n, "file-" + n, "", "так"];
+          const noFile = (opts.noFile || []).indexOf(n) !== -1;
+          const full = [n, "менеджер", "viber-" + n, noFile ? "" : "file-" + n, "", "так"];
           return full.slice(col - 1, col - 1 + nc);
         });
       },
@@ -113,7 +114,10 @@ function makeEnv(opts = {}) {
     // Заглушки того, що живе в Code.gs
     getManagers: () => {
       const out = {};
-      Object.keys(files).forEach((n) => { out[n] = { fileId: "file-" + n, viberId: "viber-" + n }; });
+      Object.keys(files).forEach((n) => {
+        const noFile = (opts.noFile || []).indexOf(n) !== -1;
+        out[n] = { fileId: noFile ? "" : "file-" + n, viberId: "viber-" + n };
+      });
       return out;
     },
     syncToManager: (rowData, rowId, fileId, toName) => { files[toName].push(rowId); },

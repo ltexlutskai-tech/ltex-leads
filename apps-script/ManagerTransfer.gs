@@ -38,8 +38,9 @@
 //     checkTransferQueue()
 //
 // ▶ ЗВІРКА (якщо є підозра, що перенос загубився):
-//     resyncManagerAssignments(true)    // тільки показати розбіжності
-//     resyncManagerAssignments(false)   // виправити й розіслати сповіщення
+//     resyncManagerAssignments          // тільки показати розбіжності
+//     resyncManagerAssignmentsApply     // виправити й розіслати сповіщення
+//   (обидві — з випадачки редактора, аргументи вписувати не треба)
 //
 // ▶ РУЧНІ ІНСТРУМЕНТИ:
 //     reassignLead("LTEX-20260101-1234", "Дунас Богдан")
@@ -195,7 +196,7 @@ function checkTransferSetup() {
 
 var TRANSFER_LOG_SHEET   = "_transfers"; // журнал перенесень у головному файлі
 var TRANSFER_MAX_ROWS    = 50;           // максимум рядків за одне редагування
-var TRANSFER_RESYNC_PER_RUN = 8;         // скільки розбіжностей виправляє звірка за запуск
+var TRANSFER_RESYNC_PER_RUN = 25;        // скільки розбіжностей виправляє звірка за запуск
 var TRANSFER_PUSH_TO_CRM = true;         // дублювати зміну менеджера в L-TEX CRM
 
 // Колонки, які веде САМ менеджер у своєму файлі.
@@ -432,7 +433,15 @@ function resyncManagerAssignments(dryRun) {
     } catch (err) { Logger.log("resync: файл «" + name + "»: " + err); }
   }
 
+  // У кого з менеджерів узагалі Є файл. Без файлу рядок нікуди покласти —
+  // і це не та розбіжність, яку виправляють переносом: там бракує таблиці
+  // менеджера, а не синхронізації. Раніше такі рядки лізли б у чергу на
+  // виправлення знову й знову, з'їдаючи ліміт і не зникаючи ніколи.
+  var hasFile = {};
+  for (var fn in files) if (files[fn].fileId) hasFile[fn] = true;
+
   var broken = [];
+  var noFile = {};   // менеджер → скільки рядків на ньому висить
   for (var wid in want) {
     var to   = want[wid];
     var has  = holders[wid] || {};
@@ -441,23 +450,46 @@ function resyncManagerAssignments(dryRun) {
     for (var h in has) if (h !== to) alien.push(h);
     // Менеджер не призначений — нічийний рядок, це не розбіжність.
     if (!to) { if (alien.length) broken.push({id: wid, to: "—", alien: alien}); continue; }
-    if (!mine || alien.length) broken.push({id: wid, to: to, alien: alien});
+    if (!mine || alien.length) {
+      if (!hasFile[to]) { noFile[to] = (noFile[to] || 0) + 1; continue; }
+      broken.push({id: wid, to: to, alien: alien});
+    }
   }
 
-  if (!broken.length) {
+  var noFileNames = [];
+  for (var nf in noFile) noFileNames.push(nf);
+
+  if (!broken.length && !noFileNames.length) {
     Logger.log("✅ Розбіжностей немає: файли менеджерів збігаються з головною.");
     return;
   }
 
-  var lines = ["Розбіжностей: " + broken.length];
+  var lost = 0, misplaced = 0;
+  for (var c2 = 0; c2 < broken.length; c2++) {
+    if (broken[c2].alien.length) misplaced++; else lost++;
+  }
+
+  var lines = ["Розбіжностей до виправлення: " + broken.length +
+               " (не в того менеджера: " + misplaced + ", немає ні в кого: " + lost + ")"];
   for (var b = 0; b < broken.length && b < 40; b++) {
     lines.push("  " + broken[b].id + " → має бути «" + broken[b].to + "»" +
                (broken[b].alien.length ? ", лежить у: " + broken[b].alien.join(", ") : ", немає ні в кого"));
   }
   if (broken.length > 40) lines.push("  … і ще " + (broken.length - 40));
 
+  if (noFileNames.length) {
+    lines.push("");
+    lines.push("⚠️ Менеджери БЕЗ таблиці — їхні клієнти нікуди класти:");
+    for (var n2 = 0; n2 < noFileNames.length; n2++) {
+      lines.push("   " + noFileNames[n2] + " — клієнтів: " + noFile[noFileNames[n2]]);
+    }
+    lines.push("   Заведіть файл і впишіть його ID в аркуш «⚙️ Менеджери», колонка D,");
+    lines.push("   потім запустіть звірку ще раз — клієнти поїдуть самі.");
+  }
+
   if (dryRun) {
-    lines.push("=== Це була ПЕРЕВІРКА. Щоб виправити — resyncManagerAssignments(false) ===");
+    lines.push("");
+    lines.push("=== Це була ПЕРЕВІРКА. Щоб виправити — запустіть resyncManagerAssignmentsApply ===");
     Logger.log(lines.join("\n"));
     return;
   }
@@ -471,7 +503,10 @@ function resyncManagerAssignments(dryRun) {
     if (!row) continue;
     var res;
     try {
-      res = transferLeadRow_(sheet, row);
+      // Ми щойно прочитали всі файли — отже точно знаємо, хто тримає рядок.
+      // Передаємо цей список, щоб не відкривати решту файлів дарма: саме на
+      // цьому перенос і втрачав секунди під замком.
+      res = transferLeadRow_(sheet, row, {fromNames: broken[f].alien});
     } catch (err) {
       Logger.log("resync: " + broken[f].id + ": " + err);
       res = {busy: true};
@@ -480,8 +515,20 @@ function resyncManagerAssignments(dryRun) {
     fixed++;
   }
   lines.push("🧹 Виправлено за цей запуск: " + fixed);
-  if (left) lines.push("⏳ Лишилось " + left + " — запустіть resyncManagerAssignments(false) ще раз");
+  if (left) lines.push("⏳ Лишилось " + left + " — запустіть resyncManagerAssignmentsApply ще раз");
   Logger.log(lines.join("\n"));
+}
+
+
+// Виправити знайдені розбіжності.
+//
+// Окрема функція без аргументів навмисно: випадачка редактора Apps Script
+// показує ЛИШЕ функції без параметрів і запускає їх без жодного значення —
+// тобто `resyncManagerAssignments` звідти завжди спрацює як перевірка. Просити
+// user щоразу лізти в код і дописувати `(false)` — це та сама пастка, через
+// яку роботу відкладають «на потім».
+function resyncManagerAssignmentsApply() {
+  resyncManagerAssignments(false);
 }
 
 
@@ -586,11 +633,23 @@ function transferLeadRow_(sheet, row, opts) {
     // саме через них масова зміна менеджера втрачала переноси. Рядок, що з
     // якоїсь давньої помилки лежить ще в чужому файлі, підбере звірка
     // `resyncManagerAssignments`.
-    var fromHint = opts.fromHint ? opts.fromHint.toString().trim() : "";
-    var fastPath = fromHint !== "" && fromHint !== toName && !!allFiles[fromHint];
+    // `fromNames` — точний список (його передає звірка: вона щойно прочитала
+    // всі файли й знає, хто саме тримає рядок; порожній список означає «ні в
+    // кого», і тоді не відкриваємо жодного файлу).
+    // `fromHint` — здогад з e.oldValue для одиночного редагування.
+    var only = null;   // null = обходимо всі файли
+    if (opts.fromNames && Object.prototype.toString.call(opts.fromNames) === "[object Array]") {
+      only = {};
+      for (var q = 0; q < opts.fromNames.length; q++) only[opts.fromNames[q]] = true;
+    } else {
+      var fromHint = opts.fromHint ? opts.fromHint.toString().trim() : "";
+      if (fromHint && fromHint !== toName && allFiles[fromHint]) {
+        only = {}; only[fromHint] = true;
+      }
+    }
     for (var mName in allFiles) {
       if (mName === toName) continue;
-      if (fastPath && mName !== fromHint) continue;
+      if (only && !only[mName]) continue;
       var fid = allFiles[mName].fileId;
       if (!fid) continue;
       var res = removeLeadFromManagerFile_(fid, rowId);
