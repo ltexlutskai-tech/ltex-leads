@@ -1,5 +1,5 @@
 // ============================================================
-// L-TEX CRM | v6.9 — Перепризначення менеджера (перенос контрагента)
+// L-TEX CRM | v7.0 — Перепризначення менеджера (перенос контрагента)
 // ============================================================
 // ЩО РОБИТЬ
 //   Змінюєш менеджера в колонці K аркуша «🔒 2026» — і скрипт сам:
@@ -21,6 +21,25 @@
 //     installManagerTransferTrigger()
 //   Прибрати:
 //     removeManagerTransferTrigger()
+//
+// ▶ ВАЖЛИВО ПРО МАСОВУ ЗМІНУ МЕНЕДЖЕРА (інцидент 25.09.2026)
+//   Кожен перенос бере спільний замок і робить важку роботу: відкриває файли
+//   менеджерів, видаляє й додає рядки, шле Viber, штовхає зміну в CRM. Це
+//   десятки секунд. Коли user змінив менеджера у 10 клієнтів підряд, перші
+//   переноси тримали замок, а решта чекали свої 20 секунд і ТИХО зникали —
+//   спрацювало 3 з 10. Ні переносу, ні сповіщення, ні сліду для користувача.
+//   Тепер такий рядок не губиться: він іде в чергу, і хвилинний тригер
+//   доводить його до кінця. Плюс швидкий шлях — коли відомо, від кого
+//   передаємо, чистимо лише ЙОГО файл, а не всі.
+//
+// ▶ ВСТАНОВЛЕННЯ ЧЕРГИ (один раз, після оновлення файлу):
+//     installTransferQueueTrigger()
+//   Подивитись, чи щось висить:
+//     checkTransferQueue()
+//
+// ▶ ЗВІРКА (якщо є підозра, що перенос загубився):
+//     resyncManagerAssignments(true)    // тільки показати розбіжності
+//     resyncManagerAssignments(false)   // виправити й розіслати сповіщення
 //
 // ▶ РУЧНІ ІНСТРУМЕНТИ:
 //     reassignLead("LTEX-20260101-1234", "Дунас Богдан")
@@ -176,6 +195,7 @@ function checkTransferSetup() {
 
 var TRANSFER_LOG_SHEET   = "_transfers"; // журнал перенесень у головному файлі
 var TRANSFER_MAX_ROWS    = 50;           // максимум рядків за одне редагування
+var TRANSFER_RESYNC_PER_RUN = 8;         // скільки розбіжностей виправляє звірка за запуск
 var TRANSFER_PUSH_TO_CRM = true;         // дублювати зміну менеджера в L-TEX CRM
 
 // Колонки, які веде САМ менеджер у своєму файлі.
@@ -220,6 +240,251 @@ function removeManagerTransferTrigger() {
 }
 
 
+// ── Черга відкладених переносів ───────────────────────────
+//
+// НАВІЩО. Перенос бере спільний замок на 20 секунд. Коли менеджера міняють у
+// кількох клієнтів підряд, перші переноси тримають замок, а решта не встигають
+// його дочекатись. Раніше такий рядок просто зникав — user змінив менеджера у
+// 10 клієнтів, а переїхало 3, і про сім інших ніде не було ні слова.
+//
+// Тепер рядок, який не встиг, лягає в чергу, і хвилинний тригер доводить його
+// до кінця. Черга живе у властивостях скрипта — ОДИН ключ на рядок, а не
+// спільний список: паралельні записи в спільний список самі себе затирали б,
+// тобто ми міняли б одну втрату на іншу.
+
+var TRANSFER_QUEUE_PREFIX  = "TRPEND_";   // TRPEND_<ID> → кількість спроб
+var TRANSFER_QUEUE_PER_RUN = 5;           // скільки доводимо до кінця за запуск
+var TRANSFER_QUEUE_TRIES   = 10;          // після стількох невдач — здаємось і кажемо
+
+// Кладе рядок у чергу. Повторний виклик по тому самому ID лічильник не збиває.
+function transferQueuePush_(rowId) {
+  var id = (rowId || "").toString().trim();
+  if (!id) { Logger.log("transferQueuePush_: порожній ID, рядок втрачено"); return; }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var key   = TRANSFER_QUEUE_PREFIX + id;
+    if (!props.getProperty(key)) props.setProperty(key, "0");
+    Logger.log("transfer: " + id + " → у чергу (система зайнята)");
+  } catch (err) { Logger.log("transferQueuePush_: " + err); }
+}
+
+function transferQueueKeys_() {
+  var out = [];
+  try {
+    var all = PropertiesService.getScriptProperties().getProperties();
+    for (var k in all) if (k.indexOf(TRANSFER_QUEUE_PREFIX) === 0) out.push(k);
+  } catch (err) { Logger.log("transferQueueKeys_: " + err); }
+  return out.sort();
+}
+
+// Хвилинний тригер: доводить до кінця те, що не встигло за редагуванням.
+function processTransferQueue() {
+  var T    = TR();
+  var keys = transferQueueKeys_();
+  if (!keys.length) return;
+
+  var props = PropertiesService.getScriptProperties();
+  var sheet = SpreadsheetApp.openById(T.MAIN_FILE_ID).getSheetByName(T.MAIN_SHEET);
+  if (!sheet) { Logger.log("processTransferQueue: аркуш не знайдено"); return; }
+
+  var done = 0;
+  for (var i = 0; i < keys.length && done < TRANSFER_QUEUE_PER_RUN; i++) {
+    var key   = keys[i];
+    var rowId = key.slice(TRANSFER_QUEUE_PREFIX.length);
+    var tries = parseInt(props.getProperty(key) || "0", 10) + 1;
+
+    var row = findMainRowById_(sheet, rowId);
+    if (!row) {
+      // Рядок зник із головної — тримати його в черзі нема сенсу.
+      props.deleteProperty(key);
+      Logger.log("processTransferQueue: " + rowId + " немає в головній, прибрано з черги");
+      continue;
+    }
+
+    var res;
+    try {
+      res = transferLeadRow_(sheet, row);
+    } catch (err) {
+      Logger.log("processTransferQueue: " + rowId + ": " + err);
+      res = {busy: true};
+    }
+    done++;
+
+    if (res && res.busy) {
+      props.setProperty(key, String(tries));
+      if (tries >= TRANSFER_QUEUE_TRIES) {
+        // Мовчки здатись — це те, з чого все й почалось. Кажемо керівникам.
+        props.deleteProperty(key);
+        notifyOwners("⚠️ Перенос контрагента не вдався\n\nID: " + rowId +
+                     "\nСпроб: " + tries +
+                     "\n\nЗапустіть у редакторі скриптів: resyncManagerAssignments(false)");
+      }
+      continue;
+    }
+    props.deleteProperty(key);
+    Logger.log("processTransferQueue: " + rowId + " доведено до кінця з " + tries + "-ї спроби");
+  }
+}
+
+// Номер рядка головної таблиці за ID. 0 — немає такого.
+function findMainRowById_(sheet, rowId) {
+  var T  = TR();
+  var id = (rowId || "").toString().trim();
+  if (!id) return 0;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < T.DATA_START) return 0;
+  var ids = sheet.getRange(T.DATA_START, T.COL.ID, lastRow - T.DATA_START + 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] && ids[i][0].toString().trim() === id) return T.DATA_START + i;
+  }
+  return 0;
+}
+
+function installTransferQueueTrigger() {
+  var exists = false;
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === "processTransferQueue") exists = true;
+  });
+  if (exists) { Logger.log("ℹ️ Тригер черги переносів уже встановлено"); return; }
+  ScriptApp.newTrigger("processTransferQueue").timeBased().everyMinutes(1).create();
+  Logger.log("✅ Тригер processTransferQueue встановлено (щохвилини)");
+}
+
+function removeTransferQueueTrigger() {
+  var removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === "processTransferQueue") { ScriptApp.deleteTrigger(t); removed++; }
+  });
+  Logger.log("Видалено тригерів черги: " + removed);
+}
+
+// Що зараз висить у черзі. Запускай, якщо перенос «не доїхав».
+function checkTransferQueue() {
+  var keys = transferQueueKeys_();
+  if (!keys.length) { Logger.log("Черга порожня — усе доведено до кінця."); return; }
+  var props = PropertiesService.getScriptProperties();
+  var lines = ["У черзі: " + keys.length];
+  keys.forEach(function(k) {
+    lines.push("  " + k.slice(TRANSFER_QUEUE_PREFIX.length) +
+               " — спроб: " + (props.getProperty(k) || "0"));
+  });
+  var has = false;
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === "processTransferQueue") has = true;
+  });
+  lines.push(has ? "✅ Тригер черги встановлено" :
+                   "❌ Тригера немає — запусти installTransferQueueTrigger()");
+  Logger.log(lines.join("\n"));
+}
+
+
+// ── Звірка: головна таблиця проти файлів менеджерів ───────
+//
+// Головна таблиця — джерело правди. Ця функція знаходить рядки, у яких файли
+// менеджерів із нею розійшлись (клієнт лежить не в того або взагалі ні в кого),
+// і доводить їх до ладу — зі звичайними сповіщеннями.
+//
+// Потрібна там, де тригер редагування не спрацював: масова правка, вставка
+// кількох рядків одразу, збій Google. Дорога операція (відкриває всі файли
+// менеджерів), тож за один запуск виправляємо небагато — решта підхопиться
+// наступним запуском, про що функція й скаже.
+//
+//   resyncManagerAssignments(true)    // тільки показати
+//   resyncManagerAssignments(false)   // виправити
+function resyncManagerAssignments(dryRun) {
+  var T = TR();
+  if (dryRun === undefined) dryRun = true;
+
+  var sheet = SpreadsheetApp.openById(T.MAIN_FILE_ID).getSheetByName(T.MAIN_SHEET);
+  if (!sheet) { Logger.log("Аркуш «" + T.MAIN_SHEET + "» не знайдено"); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < T.DATA_START) { Logger.log("Немає даних"); return; }
+
+  var data  = sheet.getRange(T.DATA_START, 1, lastRow - T.DATA_START + 1, T.MAIN_LAST_COL).getValues();
+  var want  = {};   // ID → менеджер за головною
+  var rowOf = {};   // ID → номер рядка
+  for (var i = 0; i < data.length; i++) {
+    var id = data[i][T.COL.ID-1] ? data[i][T.COL.ID-1].toString().trim() : "";
+    if (!id) continue;
+    // Порожні рядки (без імені й телефону) не рахуємо за роботу.
+    if (!data[i][T.COL.NAME-1] && !data[i][T.COL.PHONE-1]) continue;
+    want[id]  = data[i][T.COL.MANAGER-1] ? data[i][T.COL.MANAGER-1].toString().trim() : "";
+    rowOf[id] = T.DATA_START + i;
+  }
+
+  // Хто зараз тримає кожен ID. Кожен файл читаємо РІВНО ОДИН раз.
+  var files = getAllManagerFiles_();
+  var holders = {};
+  for (var name in files) {
+    var fid = files[name].fileId;
+    if (!fid) continue;
+    try {
+      var ms = SpreadsheetApp.openById(fid).getSheets()[0];
+      var ml = ms.getLastRow();
+      if (ml < T.MGR_DATA_START) continue;
+      var ids = ms.getRange(T.MGR_DATA_START, 1, ml - T.MGR_DATA_START + 1, 1).getValues();
+      for (var j = 0; j < ids.length; j++) {
+        var mid = ids[j][0] ? ids[j][0].toString().trim() : "";
+        if (!mid) continue;
+        if (!holders[mid]) holders[mid] = {};
+        holders[mid][name] = true;
+      }
+    } catch (err) { Logger.log("resync: файл «" + name + "»: " + err); }
+  }
+
+  var broken = [];
+  for (var wid in want) {
+    var to   = want[wid];
+    var has  = holders[wid] || {};
+    var mine = !!has[to];
+    var alien = [];
+    for (var h in has) if (h !== to) alien.push(h);
+    // Менеджер не призначений — нічийний рядок, це не розбіжність.
+    if (!to) { if (alien.length) broken.push({id: wid, to: "—", alien: alien}); continue; }
+    if (!mine || alien.length) broken.push({id: wid, to: to, alien: alien});
+  }
+
+  if (!broken.length) {
+    Logger.log("✅ Розбіжностей немає: файли менеджерів збігаються з головною.");
+    return;
+  }
+
+  var lines = ["Розбіжностей: " + broken.length];
+  for (var b = 0; b < broken.length && b < 40; b++) {
+    lines.push("  " + broken[b].id + " → має бути «" + broken[b].to + "»" +
+               (broken[b].alien.length ? ", лежить у: " + broken[b].alien.join(", ") : ", немає ні в кого"));
+  }
+  if (broken.length > 40) lines.push("  … і ще " + (broken.length - 40));
+
+  if (dryRun) {
+    lines.push("=== Це була ПЕРЕВІРКА. Щоб виправити — resyncManagerAssignments(false) ===");
+    Logger.log(lines.join("\n"));
+    return;
+  }
+
+  // Виправляємо. Кожен перенос — десятки секунд, а на виконання дається 6
+  // хвилин, тож беремо небагато і чесно кажемо, скільки лишилось.
+  var fixed = 0, left = 0;
+  for (var f = 0; f < broken.length; f++) {
+    if (fixed >= TRANSFER_RESYNC_PER_RUN) { left = broken.length - fixed; break; }
+    var row = rowOf[broken[f].id];
+    if (!row) continue;
+    var res;
+    try {
+      res = transferLeadRow_(sheet, row);
+    } catch (err) {
+      Logger.log("resync: " + broken[f].id + ": " + err);
+      res = {busy: true};
+    }
+    if (res && res.busy) { transferQueuePush_(broken[f].id); continue; }
+    fixed++;
+  }
+  lines.push("🧹 Виправлено за цей запуск: " + fixed);
+  if (left) lines.push("⏳ Лишилось " + left + " — запустіть resyncManagerAssignments(false) ще раз");
+  Logger.log(lines.join("\n"));
+}
+
+
 // ── Обробник редагування колонки «Менеджер» ───────────────
 
 function onMainEditTransfer(e) {
@@ -241,15 +506,41 @@ function onMainEditTransfer(e) {
     }
 
     var single = (e.range.getNumRows() === 1 && e.range.getNumColumns() === 1);
+    // Хто був менеджером ДО правки. Telegram… тобто Google дає це лише для
+    // одиночного редагування — і саме воно дозволяє чистити ОДИН файл замість
+    // усіх. Менше роботи під замком — менше черг і втрачених переносів.
+    var fromHint = (single && e.oldValue !== undefined && e.oldValue !== null)
+      ? e.oldValue.toString().trim() : "";
+
     for (var r = startRow; r <= endRow; r++) {
       // Для одиночного редагування можемо відсіяти «зміну без зміни»
-      if (single && e.oldValue !== undefined && e.oldValue !== null) {
+      if (single && fromHint !== "") {
         var nowVal = sheet.getRange(r, T.COL.MANAGER).getValue();
-        if (e.oldValue.toString().trim() === (nowVal ? nowVal.toString().trim() : "")) continue;
+        if (fromHint === (nowVal ? nowVal.toString().trim() : "")) continue;
       }
-      transferLeadRow_(sheet, r);
+
+      // Рядок не має губитись, навіть якщо система зайнята. Раніше
+      // `transferLeadRow_` тихо повертав busy, а тут результат ніхто не читав —
+      // і перенос зникав без сліду (див. коментар угорі файлу).
+      var res;
+      try {
+        res = transferLeadRow_(sheet, r, {fromHint: fromHint});
+      } catch (rowErr) {
+        Logger.log("onMainEditTransfer: рядок " + r + ": " + rowErr);
+        res = {busy: true, id: ""};
+      }
+      if (res && res.busy) transferQueuePush_(res.id || rowIdAt_(sheet, r));
     }
   } catch (err) { Logger.log("onMainEditTransfer: " + err); }
+}
+
+// ID рядка головної таблиці (для черги, коли перенос навіть не стартував).
+function rowIdAt_(sheet, row) {
+  var T = TR();
+  try {
+    var v = sheet.getRange(row, T.COL.ID).getValue();
+    return v ? v.toString().trim() : "";
+  } catch (err) { return ""; }
 }
 
 
@@ -288,9 +579,18 @@ function transferLeadRow_(sheet, row, opts) {
   var removedFrom = [];
   var carry = {};
   try {
-    // 1) Прибираємо рядок з файлів УСІХ менеджерів, крім нового
+    // 1) Прибираємо рядок з файлів попередніх менеджерів.
+    //
+    // Коли відомо, від КОГО передаємо (`fromHint` з e.oldValue), чистимо лише
+    // його файл. Повний обхід усіх файлів — це десятки секунд під замком, і
+    // саме через них масова зміна менеджера втрачала переноси. Рядок, що з
+    // якоїсь давньої помилки лежить ще в чужому файлі, підбере звірка
+    // `resyncManagerAssignments`.
+    var fromHint = opts.fromHint ? opts.fromHint.toString().trim() : "";
+    var fastPath = fromHint !== "" && fromHint !== toName && !!allFiles[fromHint];
     for (var mName in allFiles) {
       if (mName === toName) continue;
+      if (fastPath && mName !== fromHint) continue;
       var fid = allFiles[mName].fileId;
       if (!fid) continue;
       var res = removeLeadFromManagerFile_(fid, rowId);
