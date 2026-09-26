@@ -47,7 +47,9 @@ function makeEnv(opts = {}) {
       getValues() {
         return Object.keys(files).map((n) => {
           const noFile = (opts.noFile || []).indexOf(n) !== -1;
-          const full = [n, "менеджер", "viber-" + n, noFile ? "" : "file-" + n, "", "так"];
+          // sameFile: { "Захарчук": "Гуменюк" } — двом вписали один файл
+          const alias = (opts.sameFile || {})[n] || n;
+          const full = [n, "менеджер", "viber-" + n, noFile ? "" : "file-" + alias, "", "так"];
           return full.slice(col - 1, col - 1 + nc);
         });
       },
@@ -83,8 +85,7 @@ function makeEnv(opts = {}) {
       openById(id) {
         openCalls.push(id);
         if (id.startsWith("file-")) {
-          const name = id.slice(5);
-          return { getSheets: () => [mgrFileSheet(name)] };
+          return { getSheets: () => [mgrFileSheet(id.slice(5))] };
         }
         return {
           getSheetByName: (n) => (n === "⚙️ Менеджери" ? mgrSheet : mainSheet),
@@ -108,7 +109,10 @@ function makeEnv(opts = {}) {
       }),
     },
     ScriptApp: {
-      getProjectTriggers: () => [],
+      getProjectTriggers: () => (opts.triggers || []).map((h) => ({
+        getHandlerFunction: () => h,
+        getEventType: () => "ON_EDIT",
+      })),
       newTrigger: () => ({ timeBased: () => ({ everyMinutes: () => ({ create: () => {} }) }) }),
     },
     // Заглушки того, що живе в Code.gs
@@ -116,7 +120,8 @@ function makeEnv(opts = {}) {
       const out = {};
       Object.keys(files).forEach((n) => {
         const noFile = (opts.noFile || []).indexOf(n) !== -1;
-        out[n] = { fileId: noFile ? "" : "file-" + n, viberId: "viber-" + n };
+        const alias = (opts.sameFile || {})[n] || n;
+        out[n] = { fileId: noFile ? "" : "file-" + alias, viberId: "viber-" + n };
       });
       return out;
     },

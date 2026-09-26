@@ -37,6 +37,9 @@
 //   Подивитись, чи щось висить:
 //     checkTransferQueue()
 //
+// ▶ ЯКЩО ПЕРЕНОС «ВІДПРАЦЮВАВ», А РЯДОК ЛИШИВСЯ:
+//     diagnoseTransferSetup             // назве причину: спільний файл або дубль ID
+//
 // ▶ ЗВІРКА (якщо є підозра, що перенос загубився):
 //     resyncManagerAssignments          // тільки показати розбіжності
 //     resyncManagerAssignmentsApply     // виправити й розіслати сповіщення
@@ -440,8 +443,21 @@ function resyncManagerAssignments(dryRun) {
   var hasFile = {};
   for (var fn in files) if (files[fn].fileId) hasFile[fn] = true;
 
+  // Двом менеджерам вписали один файл — перенос між ними неможливий у
+  // принципі, і звірка бралася б за ці рядки вічно. Відкладаємо окремо.
+  var sameFileAs = {};
+  for (var n1 in files) {
+    for (var n2 in files) {
+      if (n1 === n2 || !files[n1].fileId) continue;
+      if (files[n1].fileId === files[n2].fileId) {
+        (sameFileAs[n1] = sameFileAs[n1] || {})[n2] = true;
+      }
+    }
+  }
+
   var broken = [];
-  var noFile = {};   // менеджер → скільки рядків на ньому висить
+  var noFile = {};    // менеджер → скільки рядків на ньому висить
+  var shared = {};    // «А + Б» → скільки рядків через спільний файл
   for (var wid in want) {
     var to   = want[wid];
     var has  = holders[wid] || {};
@@ -449,17 +465,28 @@ function resyncManagerAssignments(dryRun) {
     var alien = [];
     for (var h in has) if (h !== to) alien.push(h);
     // Менеджер не призначений — нічийний рядок, це не розбіжність.
-    if (!to) { if (alien.length) broken.push({id: wid, to: "—", alien: alien}); continue; }
+    if (!to) { if (alien.length) broken.push({id: wid, to: "—", alien: alien, mine: false}); continue; }
     if (!mine || alien.length) {
       if (!hasFile[to]) { noFile[to] = (noFile[to] || 0) + 1; continue; }
-      broken.push({id: wid, to: to, alien: alien});
+      // Усі «чужі» — це насправді той самий файл, що й у потрібного менеджера?
+      var real = [];
+      for (var a = 0; a < alien.length; a++) {
+        if (sameFileAs[to] && sameFileAs[to][alien[a]]) {
+          var key = to + " + " + alien[a];
+          shared[key] = (shared[key] || 0) + 1;
+        } else real.push(alien[a]);
+      }
+      if (!real.length && mine) continue;   // розбіжність уявна: файл один
+      broken.push({id: wid, to: to, alien: real, mine: mine});
     }
   }
 
   var noFileNames = [];
   for (var nf in noFile) noFileNames.push(nf);
 
-  if (!broken.length && !noFileNames.length) {
+  var sharedCount = 0;
+  for (var sc in shared) sharedCount++;
+  if (!broken.length && !noFileNames.length && !sharedCount) {
     Logger.log("✅ Розбіжностей немає: файли менеджерів збігаються з головною.");
     return;
   }
@@ -472,10 +499,28 @@ function resyncManagerAssignments(dryRun) {
   var lines = ["Розбіжностей до виправлення: " + broken.length +
                " (не в того менеджера: " + misplaced + ", немає ні в кого: " + lost + ")"];
   for (var b = 0; b < broken.length && b < 40; b++) {
-    lines.push("  " + broken[b].id + " → має бути «" + broken[b].to + "»" +
-               (broken[b].alien.length ? ", лежить у: " + broken[b].alien.join(", ") : ", немає ні в кого"));
+    // Три різні біди, які раніше друкувались однаково. «Є в потрібного, але
+    // ще й у чужого» — це дубль, а не незроблений перенос, і шукати його
+    // треба зовсім не там, де «лежить лише у чужого».
+    var what;
+    if (!broken[b].alien.length)   what = ", немає ні в кого";
+    else if (broken[b].mine)       what = ", Є У НЬОГО, але ЩЕ Й у: " + broken[b].alien.join(", ") + " — дубль";
+    else                           what = ", лежить лише у: " + broken[b].alien.join(", ");
+    lines.push("  " + broken[b].id + " → має бути «" + broken[b].to + "»" + what);
   }
   if (broken.length > 40) lines.push("  … і ще " + (broken.length - 40));
+
+  var sharedKeys = [];
+  for (var sk in shared) sharedKeys.push(sk);
+  if (sharedKeys.length) {
+    lines.push("");
+    lines.push("❌ ОДИН ФАЙЛ НА ДВОХ МЕНЕДЖЕРІВ — перенос між ними неможливий:");
+    for (var s2 = 0; s2 < sharedKeys.length; s2++) {
+      lines.push("   " + sharedKeys[s2] + " — спільних рядків: " + shared[sharedKeys[s2]]);
+    }
+    lines.push("   Виправте ID файлу в аркуші «⚙️ Менеджери», колонка D.");
+    lines.push("   Докладно — запустіть diagnoseTransferSetup.");
+  }
 
   if (noFileNames.length) {
     lines.push("");
@@ -517,6 +562,153 @@ function resyncManagerAssignments(dryRun) {
   lines.push("🧹 Виправлено за цей запуск: " + fixed);
   if (left) lines.push("⏳ Лишилось " + left + " — запустіть resyncManagerAssignmentsApply ще раз");
   Logger.log(lines.join("\n"));
+}
+
+
+// ── Діагностика: чому перенос «відпрацював», а рядок лишився ──
+//
+// 25.09 перенос відзвітував про успіх по 36 клієнтах — сповіщення прийшли, у
+// журналі чисто, — а звірка наступного ранку показала ті самі 36 на місці.
+// Так буває від двох речей, і обидві не в коді, а в даних:
+//
+//   • двом менеджерам вписали ОДИН файл. Тоді «прибрати в одного» і «додати
+//     іншому» — та сама таблиця: перенос чесно звітує, рядок нікуди не
+//     дівається, звірка бачить розбіжність вічно;
+//   • у головній таблиці ДУБЛЬ рядка з тим самим ID: в одному менеджер
+//     новий, у другому старий. Що б ми не переносили, другий рядок повертає
+//     клієнта назад.
+//
+// Функція дивиться рівно на це й каже, котре з двох. Нічого не змінює.
+function diagnoseTransferSetup() {
+  var T = TR();
+  var out = ["=== Діагностика переносу ==="];
+
+  // 1) Менеджери, їхні файли й спільні файли
+  var files = getAllManagerFiles_();
+  var names = [];
+  for (var n in files) names.push(n);
+  names.sort();
+
+  var byFile = {};
+  out.push("");
+  out.push("Менеджери (" + names.length + "):");
+  for (var i = 0; i < names.length; i++) {
+    var fid = files[names[i]].fileId;
+    out.push("  " + names[i] +
+             " — файл: " + (fid ? "…" + fid.slice(-8) : "НЕМАЄ") +
+             ", Viber: " + (files[names[i]].viberId ? "є" : "НЕМАЄ"));
+    if (fid) (byFile[fid] = byFile[fid] || []).push(names[i]);
+  }
+
+  var shared = [];
+  for (var f in byFile) if (byFile[f].length > 1) shared.push(byFile[f]);
+  out.push("");
+  if (shared.length) {
+    out.push("❌ ПРИЧИНА ЗНАЙДЕНА: один файл на кількох менеджерів");
+    for (var sh = 0; sh < shared.length; sh++) {
+      out.push("   " + shared[sh].join("  +  ") + " — таблиця та сама");
+    }
+    out.push("   Перенос між ними неможливий: він прибирає й додає в один файл.");
+    out.push("   Виправте ID у аркуші «⚙️ Менеджери», колонка D, і запустіть звірку.");
+  } else {
+    out.push("✅ У кожного менеджера свій окремий файл");
+  }
+
+  // 2) Дублі ID у головній таблиці
+  var sheet = SpreadsheetApp.openById(T.MAIN_FILE_ID).getSheetByName(T.MAIN_SHEET);
+  if (!sheet) { out.push("❌ Аркуш «" + T.MAIN_SHEET + "» не знайдено"); Logger.log(out.join("\n")); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < T.DATA_START) { out.push("Немає даних"); Logger.log(out.join("\n")); return; }
+
+  var data = sheet.getRange(T.DATA_START, 1, lastRow - T.DATA_START + 1, T.MAIN_LAST_COL).getValues();
+  var seen = {};          // ID → [{row, manager}]
+  for (var d = 0; d < data.length; d++) {
+    var id = data[d][T.COL.ID-1] ? data[d][T.COL.ID-1].toString().trim() : "";
+    if (!id) continue;
+    if (!data[d][T.COL.NAME-1] && !data[d][T.COL.PHONE-1]) continue;
+    (seen[id] = seen[id] || []).push({
+      row: T.DATA_START + d,
+      mgr: data[d][T.COL.MANAGER-1] ? data[d][T.COL.MANAGER-1].toString().trim() : ""
+    });
+  }
+
+  var dupSame = 0, dupDiff = [];
+  for (var id2 in seen) {
+    if (seen[id2].length < 2) continue;
+    var mgrs = {};
+    for (var k = 0; k < seen[id2].length; k++) mgrs[seen[id2][k].mgr] = true;
+    if (Object.keys(mgrs).length > 1) dupDiff.push({id: id2, rows: seen[id2]});
+    else dupSame++;
+  }
+
+  out.push("");
+  if (dupDiff.length) {
+    out.push("❌ ПРИЧИНА ЗНАЙДЕНА: один ID у кількох рядках з РІЗНИМИ менеджерами (" + dupDiff.length + ")");
+    out.push("   Другий рядок повертає клієнта старому менеджеру після кожного переносу.");
+    for (var dd = 0; dd < dupDiff.length && dd < 20; dd++) {
+      var parts = [];
+      for (var pr = 0; pr < dupDiff[dd].rows.length; pr++) {
+        parts.push("рядок " + dupDiff[dd].rows[pr].row + " → «" + (dupDiff[dd].rows[pr].mgr || "—") + "»");
+      }
+      out.push("   " + dupDiff[dd].id + ": " + parts.join(" | "));
+    }
+    if (dupDiff.length > 20) out.push("   … і ще " + (dupDiff.length - 20));
+    out.push("   Лишіть один рядок на клієнта — зайві видаліть.");
+  } else {
+    out.push("✅ ID з різними менеджерами в кількох рядках немає" +
+             (dupSame ? " (однакових дублів: " + dupSame + " — вони переносу не заважають)" : ""));
+  }
+
+  // 3) Що насправді лежить у файлах
+  out.push("");
+  out.push("У файлах менеджерів:");
+  for (var j = 0; j < names.length; j++) {
+    var fid2 = files[names[j]].fileId;
+    if (!fid2) { out.push("  " + names[j] + " — файлу немає"); continue; }
+    try {
+      var ms = SpreadsheetApp.openById(fid2).getSheets()[0];
+      var ml = ms.getLastRow();
+      var rows = Math.max(0, ml - T.MGR_DATA_START + 1);
+      var alien = 0;
+      if (rows > 0) {
+        var ids = ms.getRange(T.MGR_DATA_START, 1, rows, 1).getValues();
+        for (var q = 0; q < ids.length; q++) {
+          var mid = ids[q][0] ? ids[q][0].toString().trim() : "";
+          if (!mid || !seen[mid]) continue;
+          var belongs = false;
+          for (var w = 0; w < seen[mid].length; w++) if (seen[mid][w].mgr === names[j]) belongs = true;
+          if (!belongs) alien++;
+        }
+      }
+      out.push("  " + names[j] + " — рядків: " + rows + (alien ? ", з них чужих: " + alien : ""));
+    } catch (err) { out.push("  " + names[j] + " — ❌ " + err); }
+  }
+
+  // 4) Хто ще в цьому проєкті може писати у файли менеджерів.
+  //
+  // Наш перенос — не єдиний код у проєкті. Якщо рядки повертаються, а обидві
+  // причини вище виключені, найімовірніше їх повертає інший тригер: звідси
+  // цього не видно, а зі списку — видно.
+  out.push("");
+  out.push("Тригери проєкту:");
+  try {
+    var trg = ScriptApp.getProjectTriggers();
+    if (!trg.length) out.push("  (жодного)");
+    for (var t = 0; t < trg.length; t++) {
+      var kind;
+      try { kind = trg[t].getEventType ? String(trg[t].getEventType()) : "?"; } catch (e1) { kind = "?"; }
+      out.push("  " + trg[t].getHandlerFunction() + " — " + kind);
+    }
+  } catch (err) { out.push("  ❌ " + err); }
+
+  if (!shared.length && !dupDiff.length) {
+    out.push("");
+    out.push("Обидві відомі причини виключені — отже рядки повертає щось інше.");
+    out.push("Найімовірніше це інший тригер зі списку вище (у Code.gs теж є код,");
+    out.push("що пише у файли менеджерів). Надішліть цей звіт — розберемо.");
+  }
+
+  Logger.log(out.join("\n"));
 }
 
 
@@ -647,11 +839,22 @@ function transferLeadRow_(sheet, row, opts) {
         only = {}; only[fromHint] = true;
       }
     }
+    // Файл призначення. Якщо в аркуші «⚙️ Менеджери» двом людям помилково
+    // вписали ОДИН файл, то «прибрати в одного» і «додати іншому» — це та сама
+    // таблиця: перенос звітував би про успіх, рядок лишався б на місці, а
+    // звірка бачила б ту саму розбіжність знову й знову. Такий файл не чіпаємо
+    // взагалі — проблему називає `diagnoseTransferSetup`.
+    var toFileId = (toName && allFiles[toName]) ? allFiles[toName].fileId : "";
+
     for (var mName in allFiles) {
       if (mName === toName) continue;
       if (only && !only[mName]) continue;
       var fid = allFiles[mName].fileId;
       if (!fid) continue;
+      if (toFileId && fid === toFileId) {
+        Logger.log("transfer: «" + mName + "» і «" + toName + "» мають ОДИН файл — пропускаю");
+        continue;
+      }
       var res = removeLeadFromManagerFile_(fid, rowId);
       if (res.removed > 0) {
         removedFrom.push(mName);
