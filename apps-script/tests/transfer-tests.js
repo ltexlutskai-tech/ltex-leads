@@ -200,4 +200,78 @@ test("нічийний рядок без менеджера не вважаєт�
   assert.ok(env.log.join("\n").indexOf("Розбіжностей немає") !== -1);
 });
 
+console.log("\nОдин файл на двох менеджерів — перенос по колу");
+test("звірка не бере такі рядки у виправлення, а називає причину", () => {
+  // Гуменюку й Захарчук вписали одну таблицю: «прибрати» й «додати» — це
+  // той самий файл, тож перенос звітує про успіх, а рядок не рухається.
+  const env = makeEnv({
+    files: { "Гуменюк Євген": ["A1"], "Захарчук Олександра": [] },
+    sameFile: { "Захарчук Олександра": "Гуменюк Євген" },
+    main: [row("A1", "Рома", "Захарчук Олександра")],
+  });
+  env.sandbox.resyncManagerAssignments(true);
+  const out = env.log.join("\n");
+  assert.ok(out.indexOf("ОДИН ФАЙЛ НА ДВОХ МЕНЕДЖЕРІВ") !== -1, out);
+  assert.ok(out.indexOf("Розбіжностей до виправлення: 0") !== -1, out);
+});
+
+test("перенос не чіпає файл, який і є файлом призначення", () => {
+  const env = makeEnv({
+    files: { "Гуменюк Євген": ["A1"], "Захарчук Олександра": [] },
+    sameFile: { "Захарчук Олександра": "Гуменюк Євген" },
+    main: [row("A1", "Рома", "Захарчук Олександра")],
+  });
+  env.sandbox.transferLeadRow_(env.mainSheet, 5, {});
+  // Рядок лишився рівно один: ми його не видалили й не продублювали.
+  assert.strictEqual(env.files["Гуменюк Євген"].length, 1,
+    "рядок мав лишитись на місці, а не зникнути чи задвоїтись");
+  assert.strictEqual(env.owners.length, 0,
+    "не можна звітувати про перенос, якого не було");
+});
+
+console.log("\nДіагностика");
+test("називає спільний файл причиною", () => {
+  const env = makeEnv({
+    files: { "Гуменюк Євген": ["A1"], "Захарчук Олександра": [] },
+    sameFile: { "Захарчук Олександра": "Гуменюк Євген" },
+    main: [row("A1", "Рома", "Захарчук Олександра")],
+  });
+  env.sandbox.diagnoseTransferSetup();
+  const out = env.log.join("\n");
+  assert.ok(out.indexOf("ПРИЧИНА ЗНАЙДЕНА: один файл") !== -1, out);
+});
+
+test("називає дубль ID з різними менеджерами причиною", () => {
+  const env = makeEnv({
+    files: { "Гуменюк Євген": ["A1"], "Захарчук Олександра": ["A1"] },
+    main: [row("A1", "Рома", "Захарчук Олександра"), row("A1", "Рома", "Гуменюк Євген")],
+  });
+  env.sandbox.diagnoseTransferSetup();
+  const out = env.log.join("\n");
+  assert.ok(out.indexOf("один ID у кількох рядках з РІЗНИМИ менеджерами") !== -1, out);
+});
+
+test("коли обидві причини виключені — показує решту тригерів проєкту", () => {
+  const env = makeEnv({
+    files: { "Гуменюк Євген": [], "Захарчук Олександра": ["A1"] },
+    main: [row("A1", "Рома", "Захарчук Олександра")],
+    triggers: ["onMainEditTransfer", "onEdit", "nightlySyncAll"],
+  });
+  env.sandbox.diagnoseTransferSetup();
+  const out = env.log.join("\n");
+  assert.ok(out.indexOf("Обидві відомі причини виключені") !== -1, out);
+  // Саме тут шукати далі: інший тригер, що теж пише у файли менеджерів.
+  assert.ok(out.indexOf("nightlySyncAll") !== -1, out);
+});
+
+test("дубль у чужому файлі описується як дубль, а не як незроблений перенос", () => {
+  const env = makeEnv({
+    files: { "Гуменюк Євген": ["A1"], "Захарчук Олександра": ["A1"] },
+    main: [row("A1", "Рома", "Захарчук Олександра")],
+  });
+  env.sandbox.resyncManagerAssignments(true);
+  const out = env.log.join("\n");
+  assert.ok(out.indexOf("Є У НЬОГО, але ЩЕ Й у: Гуменюк Євген") !== -1, out);
+});
+
 console.log("\nПройдено: " + passed);
