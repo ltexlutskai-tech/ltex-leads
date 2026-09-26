@@ -541,11 +541,33 @@ function resyncManagerAssignments(dryRun) {
 
   // Виправляємо. Кожен перенос — десятки секунд, а на виконання дається 6
   // хвилин, тож беремо небагато і чесно кажемо, скільки лишилось.
-  var fixed = 0, left = 0;
+  var fixed = 0, cleaned = 0, left = 0;
   for (var f = 0; f < broken.length; f++) {
-    if (fixed >= TRANSFER_RESYNC_PER_RUN) { left = broken.length - fixed; break; }
+    if (fixed + cleaned >= TRANSFER_RESYNC_PER_RUN) { left = broken.length - fixed - cleaned; break; }
     var row = rowOf[broken[f].id];
     if (!row) continue;
+
+    // ДУБЛЬ: клієнт уже в потрібного менеджера, просто лишилась зайва копія в
+    // старого. Тут нема чого переносити — треба прибрати копію. Гнати це через
+    // перенос означало б розіслати обом менеджерам «вам передано контрагента»
+    // вдруге за той самий рух: людина читає це як нову роботу й береться за
+    // клієнта, з яким уже все зроблено.
+    if (broken[f].mine) {
+      for (var a2 = 0; a2 < broken[f].alien.length; a2++) {
+        var afid = files[broken[f].alien[a2]] ? files[broken[f].alien[a2]].fileId : "";
+        if (!afid) continue;
+        try {
+          var rem = removeLeadFromManagerFile_(afid, broken[f].id);
+          if (rem.removed > 0) {
+            Logger.log("resync: " + broken[f].id + " — прибрано зайву копію у «" +
+                       broken[f].alien[a2] + "»");
+          }
+        } catch (err2) { Logger.log("resync (дубль): " + broken[f].id + ": " + err2); }
+      }
+      cleaned++;
+      continue;
+    }
+
     var res;
     try {
       // Ми щойно прочитали всі файли — отже точно знаємо, хто тримає рядок.
@@ -559,7 +581,7 @@ function resyncManagerAssignments(dryRun) {
     if (res && res.busy) { transferQueuePush_(broken[f].id); continue; }
     fixed++;
   }
-  lines.push("🧹 Виправлено за цей запуск: " + fixed);
+  lines.push("🔄 Перенесено: " + fixed + " · 🧹 Прибрано зайвих копій: " + cleaned);
   if (left) lines.push("⏳ Лишилось " + left + " — запустіть resyncManagerAssignmentsApply ще раз");
   Logger.log(lines.join("\n"));
 }
@@ -1261,6 +1283,16 @@ function cleanupManagerFilesFromMain(dryRun) {
 //     адміністратор, керівники (T.ADMIN, T.OWNERS) і всі, кого названо в
 //       TR_TRANSFER_ANY_NAMES / TR_TRANSFER_ANY_ROLES — будь-якого клієнта;
 //     решта менеджерів — тільки своїх клієнтів.
+
+// Прибрати з файлів менеджерів усе, що за головною таблицею їм не належить.
+//
+// Без аргументів — щоб було видно у випадачці редактора (вона показує лише
+// такі функції). Рядки, ID яких у головній немає, не чіпає: вони можуть бути
+// старішими за саму головну.
+function cleanupManagerFilesFromMainApply() {
+  cleanupManagerFilesFromMain(false);
+}
+
 
 function handleTransferCommand(text, sender) {
   var T = TR();
