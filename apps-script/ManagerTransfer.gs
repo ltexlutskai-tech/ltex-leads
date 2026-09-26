@@ -199,7 +199,8 @@ function checkTransferSetup() {
 
 var TRANSFER_LOG_SHEET   = "_transfers"; // журнал перенесень у головному файлі
 var TRANSFER_MAX_ROWS    = 50;           // максимум рядків за одне редагування
-var TRANSFER_RESYNC_PER_RUN = 25;        // скільки розбіжностей виправляє звірка за запуск
+var TRANSFER_RESYNC_PER_RUN  = 25;       // скільки ПЕРЕНОСІВ робить звірка за запуск
+var TRANSFER_RESYNC_CLEAN_PER_RUN = 60;  // скільки зайвих копій прибирає за запуск
 var TRANSFER_PUSH_TO_CRM = true;         // дублювати зміну менеджера в L-TEX CRM
 
 // Колонки, які веде САМ менеджер у своєму файлі.
@@ -491,13 +492,20 @@ function resyncManagerAssignments(dryRun) {
     return;
   }
 
-  var lost = 0, misplaced = 0;
+  // Три різні числа, бо це три різні роботи: перенести, прибрати зайве,
+  // просто додати. Раніше дубль потрапляв у «не в того менеджера» — і рядок
+  // підсумку суперечив кожному рядку списку під ним.
+  var lost = 0, misplaced = 0, dups = 0;
   for (var c2 = 0; c2 < broken.length; c2++) {
-    if (broken[c2].alien.length) misplaced++; else lost++;
+    if (!broken[c2].alien.length) lost++;
+    else if (broken[c2].mine)     dups++;
+    else                          misplaced++;
   }
 
-  var lines = ["Розбіжностей до виправлення: " + broken.length +
-               " (не в того менеджера: " + misplaced + ", немає ні в кого: " + lost + ")"];
+  var lines = ["Розбіжностей: " + broken.length +
+               " (перенести: " + misplaced +
+               ", прибрати зайву копію: " + dups +
+               ", немає ні в кого: " + lost + ")"];
   for (var b = 0; b < broken.length && b < 40; b++) {
     // Три різні біди, які раніше друкувались однаково. «Є в потрібного, але
     // ще й у чужого» — це дубль, а не незроблений перенос, і шукати його
@@ -541,9 +549,17 @@ function resyncManagerAssignments(dryRun) {
 
   // Виправляємо. Кожен перенос — десятки секунд, а на виконання дається 6
   // хвилин, тож беремо небагато і чесно кажемо, скільки лишилось.
+  // Ліміти окремі: прибрати копію — це одне відкриття файлу, а перенос — ще й
+  // запис новому менеджеру, два Viber і звернення до CRM. Спільний ліміт
+  // означав би, що десяток дублів з'їдає квоту на справжні переноси.
   var fixed = 0, cleaned = 0, left = 0;
   for (var f = 0; f < broken.length; f++) {
-    if (fixed + cleaned >= TRANSFER_RESYNC_PER_RUN) { left = broken.length - fixed - cleaned; break; }
+    var isDup = broken[f].mine && broken[f].alien.length;
+    if (isDup ? (cleaned >= TRANSFER_RESYNC_CLEAN_PER_RUN)
+              : (fixed   >= TRANSFER_RESYNC_PER_RUN)) {
+      left = broken.length - fixed - cleaned;
+      break;
+    }
     var row = rowOf[broken[f].id];
     if (!row) continue;
 
