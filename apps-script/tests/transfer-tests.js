@@ -127,7 +127,7 @@ test("бачить рядок, що лежить не в того менедже
   const env = makeEnv(BASE);
   env.sandbox.resyncManagerAssignments(true);
   const out = env.log.join("\n");
-  assert.ok(out.indexOf("не в того менеджера: 3") !== -1, out);
+  assert.ok(out.indexOf("перенести: 3") !== -1, out);
   assert.deepStrictEqual(env.files["Захарчук Олександра"], [], "перевірка не має нічого міняти");
 });
 
@@ -163,7 +163,7 @@ test("менеджер без таблиці: не мовчимо і не кру
   assert.ok(out.indexOf("Зингель Олена — клієнтів: 2") !== -1, out);
   // Головне: їх НЕ рахуємо за виправні, інакше вони щоразу з'їдали б ліміт
   // і звірка ніколи не доходила б до тих, кого справді можна полагодити.
-  assert.ok(out.indexOf("Розбіжностей до виправлення: 0") !== -1, out);
+  assert.ok(out.indexOf("Розбіжностей: 0") !== -1, out);
 });
 
 test("клієнти того, хто без таблиці, не блокують решту", () => {
@@ -223,6 +223,37 @@ test("за дубль менеджерам НЕ шлемо «вам переда
   assert.ok(env.log.join("\n").indexOf("Прибрано зайвих копій: 1") !== -1);
 });
 
+test("підсумок називає дубль дублем, а не «не в того менеджера»", () => {
+  const env = makeEnv({
+    files: { "Гуменюк Євген": ["A1", "A2"], "Захарчук Олександра": ["A1"] },
+    main: [row("A1", "Рома", "Захарчук Олександра"),
+           row("A2", "Галя", "Захарчук Олександра")],
+  });
+  env.sandbox.resyncManagerAssignments(true);
+  const out = env.log.join("\n");
+  assert.ok(out.indexOf("перенести: 1") !== -1, out);
+  assert.ok(out.indexOf("прибрати зайву копію: 1") !== -1, out);
+});
+
+test("десятки дублів не з'їдають квоту на справжні переноси", () => {
+  const files = { "Гуменюк Євген": [], "Захарчук Олександра": [] };
+  const main = [];
+  for (let i = 1; i <= 40; i++) {           // 40 дублів
+    files["Гуменюк Євген"].push("D" + i);
+    files["Захарчук Олександра"].push("D" + i);
+    main.push(row("D" + i, "Дубль " + i, "Захарчук Олександра"));
+  }
+  files["Гуменюк Євген"].push("T1");        // і один справжній перенос
+  main.push(row("T1", "Переїзд", "Захарчук Олександра"));
+
+  const env = makeEnv({ files, main });
+  env.sandbox.resyncManagerAssignments(false);
+  assert.deepStrictEqual(env.files["Гуменюк Євген"], [],
+    "усе мало прибратись за один запуск");
+  assert.ok(env.files["Захарчук Олександра"].indexOf("T1") !== -1,
+    "справжній перенос не мав загубитись серед дублів");
+});
+
 test("справжній перенос і дубль в одному запуску не плутаються", () => {
   const env = makeEnv({
     files: { "Гуменюк Євген": ["A1", "A2"], "Захарчук Олександра": ["A1"] },
@@ -248,7 +279,7 @@ test("звірка не бере такі рядки у виправлення, 
   env.sandbox.resyncManagerAssignments(true);
   const out = env.log.join("\n");
   assert.ok(out.indexOf("ОДИН ФАЙЛ НА ДВОХ МЕНЕДЖЕРІВ") !== -1, out);
-  assert.ok(out.indexOf("Розбіжностей до виправлення: 0") !== -1, out);
+  assert.ok(out.indexOf("Розбіжностей: 0") !== -1, out);
 });
 
 test("перенос не чіпає файл, який і є файлом призначення", () => {
