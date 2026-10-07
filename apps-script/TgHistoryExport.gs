@@ -215,8 +215,14 @@ function tgxSheets_() {
 
 // «🔒 2026» → «2026»: емодзі й регістр до уваги не беремо, бо назви аркушів
 // люди міняють частіше, ніж код.
+//
+// Службові аркуші відсікаємо ПЕРШИМИ. Архіви логу звуться
+// «_tg_log_архів_12.09.2026_14-07» — у назві є «2026», і без цієї перевірки
+// вони потрапляли в перелік просто за збігом. Даних вони не псували (блок
+// Telegram там порожній), але читались дарма й лякали у звіті перевірки.
 function tgxWanted_(name) {
   var clean = (name || "").toString().toLowerCase();
+  if (clean.charAt(0) === "_" || clean.indexOf("_tg_log") !== -1) return false;
   for (var i = 0; i < TGX_SHEETS.length; i++) {
     if (clean.indexOf(TGX_SHEETS[i].toLowerCase()) !== -1) return true;
   }
