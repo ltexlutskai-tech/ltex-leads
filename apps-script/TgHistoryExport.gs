@@ -88,7 +88,7 @@ function pushTgHistoryAll() {
   // рядків тисячі, тож продовжувати з місця зупинки має бути нормою, а не
   // аварійним режимом.
   var cur    = tgxCursor_();
-  var sent   = 0, batches = 0, acc = {received:0, unmatched:0, statuses:0, events:0};
+  var sent   = 0, batches = 0, acc = tgxAccNew_();
   var buffer = [];
   var done   = true;
 
@@ -138,6 +138,11 @@ function pushTgHistoryAll() {
     "Не знайшли картку: " + acc.unmatched,
     "Статусів створено/оновлено: " + acc.statuses,
     "Подій створено: " + acc.events,
+    // Мовчазний «пропущено 200» нічого не пояснює. Якщо система щось не
+    // прийняла — одразу кажемо, яке поле їй не підійшло.
+    acc.skipped ? "⚠️ Пропущено рядків: " + acc.skipped +
+                  (acc.problem ? " — " + acc.problem : "") : "",
+    acc.failed ? "❌ Пачок не прийнято: " + acc.failed : "",
     done ? "" : "Курсор: " + tgProp_(TGX_CURSOR)
   ].join("\n"));
 }
@@ -167,7 +172,7 @@ function tgHistoryExportJob() {
       var rows = tgxReadRows_(sh, DATA_START, last - DATA_START + 1, sh.getName(), since);
       buffer = buffer.concat(rows);
     }
-    var acc = {received:0, unmatched:0, statuses:0, events:0};
+    var acc = tgxAccNew_();
     while (buffer.length) tgxAcc_(acc, tgxPost_(buffer.splice(0, TGX_BATCH)));
     if (acc.received) {
       Logger.log("Догонка: прийнято " + acc.received + ", подій " + acc.events);
@@ -272,18 +277,18 @@ function tgxReadRows_(sh, startRow, count, sheetName, since) {
 
       var id = tgStr_(ids[i][0]);
       var row = {
-        status: status,
-        sentAt: tgxIso_(sentAt),
-        joinedAt: tgxIso_(joined),
-        nick: nick || null,
-        telegramId: tgid || null,
-        phone: tgStr_(phones[i][0]) || null
+        status: tgxCut_(status, 300),
+        sentAt: tgxCut_(tgxIso_(sentAt), 200),
+        joinedAt: tgxCut_(tgxIso_(joined), 200),
+        nick: tgxCut_(nick, 300),
+        telegramId: tgxCut_(tgid, 80),
+        phone: tgxCut_(tgStr_(phones[i][0]), 80)
       };
       // Для аркуша 1С ключ — код, а не рядок таблиці. Передаємо його окремим
       // полем: латинська «C» і кирилична «С» в ID виглядають однаково, і
       // звіряти їх на тому боці — шукати пригод.
-      if (is1C) row.code1C = id;
-      else row.externalId = id;
+      if (is1C) row.code1C = tgxCut_(id, 120);
+      else row.externalId = tgxCut_(id, 120);
       out.push(row);
     }
   } catch (err) { Logger.log("tgxReadRows_ (" + sheetName + "): " + err); }
@@ -293,6 +298,15 @@ function tgxReadRows_(sh, startRow, count, sheetName, since) {
 function tgxWanted1C_(name) {
   var clean = (name || "").toString().toLowerCase();
   return clean.indexOf("клієнти 1") !== -1;
+}
+
+// Довге значення з клітинки ріжемо тут, а не чекаємо відмови системи: у
+// колонці дати трапляється «Thu Oct 01 2026 17:14:35 GMT+0300 (за
+// східноєвропейським літнім часом)» — його вставили текстом колись давно.
+function tgxCut_(v, max) {
+  var s = (v === null || v === undefined) ? "" : String(v);
+  if (!s) return null;
+  return s.length > max ? s.slice(0, max) : s;
 }
 
 function tgxDate_(v) {
@@ -334,12 +348,19 @@ function tgxPost_(rows) {
   }
 }
 
+function tgxAccNew_() {
+  return {received:0, unmatched:0, statuses:0, events:0,
+          skipped:0, failed:0, problem:""};
+}
+
 function tgxAcc_(acc, res) {
-  if (!res || !res.ok) return;
+  if (!res || !res.ok) { acc.failed++; return; }
   acc.received  += res.received || 0;
   acc.unmatched += res.unmatched || 0;
   acc.statuses  += (res.statusesCreated || 0) + (res.statusesUpdated || 0);
   acc.events    += res.eventsCreated || 0;
+  acc.skipped   += res.skipped || 0;
+  if (!acc.problem && res.problem) acc.problem = res.problem;
 }
 
 function tgxCursor_() {
