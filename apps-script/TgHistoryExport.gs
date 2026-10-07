@@ -194,7 +194,7 @@ function pushTgLogAll() {
   var seen   = 0, batches = 0, done = true;
   var buffer = [];
   var acc    = {received:0, ignored:0, unmatched:0, created:0, duplicates:0,
-                skipped:0, failed:0, problem:""};
+                skipped:0, failed:0, problem:"", hint:""};
 
   for (var i = 0; i < sheets.length; i++) {
     var sh   = sheets[i];
@@ -233,8 +233,23 @@ function pushTgLogAll() {
   }
 
   if (done) tgSetProp_(TGX_LOG_CURSOR, "");
+
+  // «✅ перенесено» при жодній прийнятій пачці — найгірший рядок, який ми
+  // можемо написати: людина йде далі, а в системі нічого немає. Заголовок
+  // дивиться на ПРИЙНЯТЕ, а не на те, що ми дочитали аркуші до кінця.
+  var head;
+  if (acc.failed && !acc.received) {
+    head = "❌ Нічого не перенесено — система не прийняла жодної пачки.";
+  } else if (acc.failed) {
+    head = "⚠️ Перенесено частково: частину пачок система не прийняла.";
+  } else if (done) {
+    head = "✅ Журнал перенесено";
+  } else {
+    head = "⏳ Частину перенесено, запустіть ще раз";
+  }
+
   Logger.log([
-    (done ? "✅ Журнал перенесено" : "⏳ Частину перенесено, запустіть ще раз"),
+    head,
     "Рядків переглянуто: " + seen,
     "Пачок надіслано: " + batches,
     "Прийнято системою: " + acc.received,
@@ -245,6 +260,7 @@ function pushTgLogAll() {
     acc.skipped ? "⚠️ Пропущено рядків: " + acc.skipped +
                   (acc.problem ? " — " + acc.problem : "") : "",
     acc.failed ? "❌ Пачок не прийнято: " + acc.failed : "",
+    acc.hint || "",
     done ? "" : "Курсор: " + tgProp_(TGX_LOG_CURSOR)
   ].join("\n"));
 }
@@ -312,8 +328,19 @@ function tgxPostLog_(rows) {
     });
     var code = res.getResponseCode();
     if (code !== 200) {
-      Logger.log("tgxPostLog_: HTTP " + code + " — " + res.getContentText().slice(0, 300));
-      return null;
+      // 404 тут завжди означає одне: адреси немає, бо серверна половина ще не
+      // задеплоєна. Сервер відповідає сторінкою «не знайдено», і зливати в
+      // журнал кілобайт HTML на кожну пачку — це десять екранів розмітки
+      // замість одного рядка, з якого видно, що робити.
+      if (code === 404) {
+        Logger.log("tgxPostLog_: HTTP 404 — такої адреси на сервері немає " +
+                   "(/api/leads/engagement-events). Схоже, систему ще не " +
+                   "задеплоїли після оновлення.");
+      } else {
+        Logger.log("tgxPostLog_: HTTP " + code + " — " +
+                   tgxBrief_(res.getContentText()));
+      }
+      return {code: code};
     }
     return JSON.parse(res.getContentText());
   } catch (err) {
@@ -322,8 +349,25 @@ function tgxPostLog_(rows) {
   }
 }
 
+// Відповідь сервера коротко. HTML зрізаємо до типу: у журналі від нього користі
+// нема, а місце він займає все.
+function tgxBrief_(text) {
+  var s = (text || "").toString();
+  if (s.indexOf("<!DOCTYPE") === 0 || s.indexOf("<html") === 0) {
+    return "(сторінка HTML, не відповідь API)";
+  }
+  return s.length > 300 ? s.slice(0, 300) : s;
+}
+
 function tgxAccLog_(acc, res) {
-  if (!res || !res.ok) { acc.failed++; return; }
+  if (!res || !res.ok) {
+    acc.failed++;
+    if (res && res.code === 404 && !acc.hint) {
+      acc.hint = "👉 Задеплойте систему (.\\scripts\\deploy.ps1 -ApplyMigrations) " +
+                 "і запустіть pushTgLogAll() ще раз — нічого не загубиться.";
+    }
+    return;
+  }
   acc.received   += res.received || 0;
   acc.ignored    += res.ignored || 0;
   acc.unmatched  += res.unmatched || 0;

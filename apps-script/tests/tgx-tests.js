@@ -6,6 +6,10 @@ function test(name, fn) {
   try { fn(); console.log("  ок   " + name); pass++; }
   catch (e) { console.log("  ЗБІЙ " + name + "\n       " + e.message); fail++; }
 }
+/** Перший рядок ЗВІТУ (останній виклик Logger.log), а не першого повідомлення. */
+function reportHead(env) {
+  return String(env.log[env.log.length - 1] || "").split("\n")[0];
+}
 function eq(a, b, what) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
     throw new Error((what || "") + " очікували " + JSON.stringify(b) + ", дали " + JSON.stringify(a));
@@ -145,6 +149,68 @@ test("пачка не прийнята — кажемо про це, а не м�
   if (text.indexOf("❌ Пачок не прийнято: 1") === -1) {
     throw new Error("немає рядка про відмову: " + text);
   }
+});
+
+test("ЗАГОЛОВОК не каже «перенесено», коли не прийнято нічого", () => {
+  // Інцидент 07.10.2026: усі 10 пачок відбились 404, а перший рядок звіту
+  // казав «✅ Журнал перенесено» — бо дивився на те, що ми дочитали аркуші до
+  // кінця, а не на прийняте. Людина прочитала перший рядок і пішла далі.
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [row(D("2026-09-18T08:03:00Z"), "1C-1", "вперше")] }],
+    post: () => ({ code: 404, ok: false }),
+  });
+  env.run("pushTgLogAll()");
+  const head = reportHead(env);
+  if (head.indexOf("✅") !== -1) {
+    throw new Error("заголовок бреше: " + head);
+  }
+  if (head.indexOf("Нічого не перенесено") === -1) {
+    throw new Error("заголовок не каже, що сталось: " + head);
+  }
+});
+
+test("частина пачок не дійшла — заголовок каже «частково», не «готово»", () => {
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [
+      row(D("2026-09-18T08:03:00Z"), "1C-1", "вперше"),
+      row(D("2026-09-18T08:04:00Z"), "1C-2", "вперше"),
+    ] }],
+    // TGX_BATCH = 200, тож обидва рядки їдуть однією пачкою — робимо дві,
+    // підмінивши розмір пачки.
+    post: (p, n) => (n === 1
+      ? { ok: true, received: 1, created: 1, ignored: 0, unmatched: 0, duplicates: 0, skipped: 0 }
+      : { code: 500, ok: false }),
+  });
+  env.run("TGX_BATCH = 1; pushTgLogAll()");
+  const head = reportHead(env);
+  if (head.indexOf("частково") === -1) {
+    throw new Error("заголовок: " + head);
+  }
+});
+
+test("404 читається з першого погляду і каже, що робити", () => {
+  // Сервер віддає сторінку «не знайдено»: кілобайт HTML на кожну пачку — це
+  // десять екранів розмітки замість одного рядка, з якого видно причину.
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [row(D("2026-09-18T08:03:00Z"), "1C-1", "вперше")] }],
+    post: () => ({ code: 404, ok: false }),
+  });
+  env.run("pushTgLogAll()");
+  const text = env.log.join("\n");
+  if (text.indexOf("такої адреси на сервері немає") === -1) {
+    throw new Error("не назвали причину: " + text);
+  }
+  if (text.indexOf("deploy.ps1") === -1) {
+    throw new Error("не сказали, що робити: " + text);
+  }
+});
+
+test("HTML у відповіді не заливає журнал розміткою", () => {
+  const { run } = makeEnv({ sheets: [] });
+  eq(run('tgxBrief_("<!DOCTYPE html><html lang=\\"uk\\">" + "x".repeat(5000))'),
+     "(сторінка HTML, не відповідь API)");
+  eq(run('tgxBrief_("{\\"error\\":\\"Invalid input\\"}")'),
+     '{"error":"Invalid input"}');
 });
 
 test("скрипт переказує, що саме система пропустила", () => {
