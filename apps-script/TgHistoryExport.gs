@@ -18,8 +18,14 @@
 //
 // ЩО ЗАПУСКАТИ
 //   checkTgHistoryExport()      — подивитись, скільки рядків поїде (нічого не шле)
-//   pushTgHistoryAll()          — повний перенос; повторний запуск БЕЗПЕЧНИЙ
+//   pushTgHistoryAll()          — колонки статусу: де людина зараз
+//   pushTgLogAll()              — ЖУРНАЛ «_tg_log» і його архіви: що сталось і коли
 //   installTgHistoryExportTrigger() — щогодинна догонка свіжих рядків
+//
+//   Переноси РІЗНІ й потрібні обидва. Колонка статусу — одна клітинка на
+//   контакт, остання правда. Журнал — кожне натискання кнопки окремим рядком.
+//   «Відкрив бота» і «надіслано повторно» в колонки не потрапляють ніколи,
+//   тому без журналу «У боті» у звіті лишається порожнім, а цифри — заниженими.
 //
 //   Повний перенос тримає курсор: якщо Apps Script обірве на шостій хвилині,
 //   наступний запуск продовжить з того ж місця, а не почне спочатку.
@@ -38,6 +44,8 @@ var TGX_BATCH        = 200;   // рядків в одному запиті
 var TGX_MAX_PER_RUN  = 3000;  // щоб вкластись у 6 хвилин Apps Script
 var TGX_FRESH_DAYS   = 3;     // «свіжі» для щогодинної догонки
 var TGX_CURSOR       = "TGX_CURSOR";
+var TGX_LOG_CURSOR   = "TGX_LOG_CURSOR";
+var TGX_LOG_MAX_RUN  = 2500;  // рядків журналу за один запуск
 
 
 // ╔══════════════════════════════════════════════════════════╗
@@ -64,11 +72,22 @@ function checkTgHistoryExport() {
     out.push("  " + sheets[i].getName() + " — рядків: " + n.rows +
              ", з даними Telegram: " + n.withTg);
   }
+  var logSheets = tgxLogSheets_(), logRows = 0;
+  if (logSheets.length) {
+    out.push("");
+    out.push("Журнал подій:");
+    for (var j = 0; j < logSheets.length; j++) {
+      var n2 = Math.max(0, logSheets[j].getLastRow() - 1);
+      logRows += n2;
+      out.push("  " + logSheets[j].getName() + " — рядків: " + n2);
+    }
+  }
+
   out.push("");
-  out.push("Разом поїде: " + total);
+  out.push("Разом поїде: " + total + " (колонки) + " + logRows + " (журнал)");
   out.push("Курсор: " + (tgProp_(TGX_CURSOR) || "на початку"));
   out.push("");
-  out.push("Перенести: pushTgHistoryAll()");
+  out.push("Перенести: pushTgHistoryAll(), потім pushTgLogAll()");
   Logger.log(out.join("\n"));
 }
 
@@ -150,6 +169,173 @@ function pushTgHistoryAll() {
 function pushTgHistoryReset() {
   tgSetProp_(TGX_CURSOR, "");
   Logger.log("Курсор скинуто — наступний pushTgHistoryAll() почне спочатку.");
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  2б. ЖУРНАЛ «_tg_log» І ЙОГО АРХІВИ                      ║
+// ╚══════════════════════════════════════════════════════════╝
+// Колонки статусу кажуть, ДЕ людина зараз. Журнал каже, ЩО СТАЛОСЬ і КОЛИ:
+// кожне натискання кнопки, кожен вхід у бота, кожне повторне надсилання —
+// окремим рядком з датою й менеджером. Саме звідси беруться «У боті» й
+// «Повторно», яких у колонках немає в принципі.
+//
+// Журнал періодично відкладали вбік («_tg_log_архів_<дата>»), тож читаємо і
+// чинний, і всі архіви: для нас це один потік подій.
+function pushTgLogAll() {
+  if (!tgEcoApiBase_() || !tgEcoApiSecret_()) {
+    Logger.log("❌ Спершу: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
+    return;
+  }
+  var sheets = tgxLogSheets_();
+  if (!sheets.length) { Logger.log("❌ Журналу «" + TG_LOG_SHEET + "» не знайшов."); return; }
+
+  var cur    = tgxCursorOf_(TGX_LOG_CURSOR);
+  var seen   = 0, batches = 0, done = true;
+  var buffer = [];
+  var acc    = {received:0, ignored:0, unmatched:0, created:0, duplicates:0,
+                skipped:0, failed:0, problem:""};
+
+  for (var i = 0; i < sheets.length; i++) {
+    var sh   = sheets[i];
+    var name = sh.getName();
+    if (cur.sheet && name !== cur.sheet && !cur.passed) continue;
+    cur.passed = true;
+
+    var startRow = (name === cur.sheet && cur.row) ? cur.row : 2;  // 1 — заголовок
+    var last     = sh.getLastRow();
+    if (last < startRow) { cur.sheet = ""; cur.row = 0; continue; }
+
+    for (var r = startRow; r <= last; r += TGX_BATCH) {
+      if (seen >= TGX_LOG_MAX_RUN) {
+        tgSetProp_(TGX_LOG_CURSOR, name + "|" + r);
+        done = false;
+        break;
+      }
+      var count = Math.min(TGX_BATCH, last - r + 1);
+      var rows  = tgxReadLog_(sh, r, count);
+      seen += count;
+      if (!rows.length) continue;
+
+      buffer = buffer.concat(rows);
+      while (buffer.length >= TGX_BATCH) {
+        tgxAccLog_(acc, tgxPostLog_(buffer.splice(0, TGX_BATCH)));
+        batches++;
+      }
+    }
+    if (!done) break;
+    cur.sheet = ""; cur.row = 0;
+  }
+
+  while (buffer.length) {
+    tgxAccLog_(acc, tgxPostLog_(buffer.splice(0, TGX_BATCH)));
+    batches++;
+  }
+
+  if (done) tgSetProp_(TGX_LOG_CURSOR, "");
+  Logger.log([
+    (done ? "✅ Журнал перенесено" : "⏳ Частину перенесено, запустіть ще раз"),
+    "Рядків переглянуто: " + seen,
+    "Пачок надіслано: " + batches,
+    "Прийнято системою: " + acc.received,
+    "Подій створено: " + acc.created,
+    "Уже були: " + acc.duplicates,
+    "Не подія (скасування тощо): " + acc.ignored,
+    "Не знайшли картку: " + acc.unmatched,
+    acc.skipped ? "⚠️ Пропущено рядків: " + acc.skipped +
+                  (acc.problem ? " — " + acc.problem : "") : "",
+    acc.failed ? "❌ Пачок не прийнято: " + acc.failed : "",
+    done ? "" : "Курсор: " + tgProp_(TGX_LOG_CURSOR)
+  ].join("\n"));
+}
+
+function pushTgLogReset() {
+  tgSetProp_(TGX_LOG_CURSOR, "");
+  Logger.log("Курсор журналу скинуто.");
+}
+
+// Чинний журнал і всі його архіви, від найстарішого до найновішого.
+function tgxLogSheets_() {
+  var out = [];
+  try {
+    var all = tgSS_(MAIN_FILE_ID).getSheets();
+    for (var i = 0; i < all.length; i++) {
+      var name = all[i].getName();
+      if (name.indexOf(TG_LOG_SHEET) === 0) out.push(all[i]);
+    }
+  } catch (err) { Logger.log("tgxLogSheets_: " + err); }
+  return out;
+}
+
+// Рядок журналу: 1 Дата, 2 ID, 3 ПІБ, 4 Телефон, 5 Область, 6 Менеджер,
+// 7 Посилання, 8 Джерело, 9 Примітка.
+function tgxReadLog_(sh, startRow, count) {
+  var out = [];
+  try {
+    var last = sh.getLastRow();
+    if (startRow > last) return out;
+    count = Math.min(count, last - startRow + 1);
+    if (count <= 0) return out;
+
+    var vals = sh.getRange(startRow, 1, count, 9).getValues();
+    for (var i = 0; i < count; i++) {
+      var note = tgStr_(vals[i][8]);
+      if (!note) continue;
+      var at = tgxIso_(vals[i][0]);
+      if (!at) continue;
+
+      var id  = tgStr_(vals[i][1]);
+      var row = {
+        at: tgxCut_(at, 200),
+        phone: tgxCut_(tgStr_(vals[i][3]), 80),
+        region: tgxCut_(tgStr_(vals[i][4]), 120),
+        source: tgxCut_(tgStr_(vals[i][7]), 200),
+        note: tgxCut_(note, 400)
+      };
+      // «1C-4741» — ключ картки з 1С; решта — рядок аркуша лідів.
+      if (/^1[CС]-/i.test(id)) row.code1C = tgxCut_(id, 120);
+      else if (id) row.externalId = tgxCut_(id, 120);
+      out.push(row);
+    }
+  } catch (err) { Logger.log("tgxReadLog_ (" + sh.getName() + "): " + err); }
+  return out;
+}
+
+function tgxPostLog_(rows) {
+  try {
+    var res = UrlFetchApp.fetch(tgEcoApiBase_() + "/api/leads/engagement-events", {
+      method: "post",
+      contentType: "application/json",
+      headers: {"x-leads-secret": tgEcoApiSecret_()},
+      payload: JSON.stringify({rows: rows}),
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    if (code !== 200) {
+      Logger.log("tgxPostLog_: HTTP " + code + " — " + res.getContentText().slice(0, 300));
+      return null;
+    }
+    return JSON.parse(res.getContentText());
+  } catch (err) {
+    Logger.log("tgxPostLog_: " + err);
+    return null;
+  }
+}
+
+function tgxAccLog_(acc, res) {
+  if (!res || !res.ok) { acc.failed++; return; }
+  acc.received   += res.received || 0;
+  acc.ignored    += res.ignored || 0;
+  acc.unmatched  += res.unmatched || 0;
+  acc.created    += res.created || 0;
+  acc.duplicates += res.duplicates || 0;
+  acc.skipped    += res.skipped || 0;
+  if (!acc.problem && res.problem) acc.problem = res.problem;
+}
+
+function tgxCursorOf_(key) {
+  var parts = (tgProp_(key) || "").split("|");
+  return {sheet: parts[0] || "", row: Number(parts[1] || 0) || 0, passed: !parts[0]};
 }
 
 
