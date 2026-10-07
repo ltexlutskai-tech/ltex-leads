@@ -318,8 +318,40 @@ function tgxReadLog_(sh, startRow, count) {
 }
 
 function tgxPostLog_(rows) {
+  return tgxSend_("/api/leads/engagement-events", rows, "tgxPostLog_");
+}
+
+// Скільки секунд чекати на перезапуск і скільки разів пробувати знову.
+// Деплой гасить застосунок на десятки секунд; за цей час скрипт встигає
+// спалити всі пачки підряд і відзвітувати «нічого не перенесено» — хоча
+// достатньо було почекати.
+var TGX_RETRY_WAIT = 15000;
+var TGX_RETRIES    = 3;
+
+/**
+ * Надіслати пачку. 502/503/504 — не відмова, а «сервер зараз піднімається»:
+ * такий код віддає Cloudflare, поки застосунок перезапускається. Чекаємо й
+ * пробуємо знову; решту кодів віддаємо як є, бо на них чекання не допоможе.
+ */
+function tgxSend_(path, rows, tag) {
+  for (var attempt = 1; ; attempt++) {
+    var res = tgxSendOnce_(path, rows, tag, attempt);
+    if (!res || !res.restarting) return res;
+    if (attempt > TGX_RETRIES) {
+      Logger.log(tag + ": сервер так і не піднявся після " + TGX_RETRIES +
+                 " спроб (HTTP " + res.code + ").");
+      return res;
+    }
+    Logger.log(tag + ": HTTP " + res.code + " — сервер перезапускається, " +
+               "чекаю " + (TGX_RETRY_WAIT / 1000) + " с (спроба " +
+               attempt + " з " + TGX_RETRIES + ")");
+    Utilities.sleep(TGX_RETRY_WAIT);
+  }
+}
+
+function tgxSendOnce_(path, rows, tag, attempt) {
   try {
-    var res = UrlFetchApp.fetch(tgEcoApiBase_() + "/api/leads/engagement-events", {
+    var res = UrlFetchApp.fetch(tgEcoApiBase_() + path, {
       method: "post",
       contentType: "application/json",
       headers: {"x-leads-secret": tgEcoApiSecret_()},
@@ -332,19 +364,23 @@ function tgxPostLog_(rows) {
       // задеплоєна. Сервер відповідає сторінкою «не знайдено», і зливати в
       // журнал кілобайт HTML на кожну пачку — це десять екранів розмітки
       // замість одного рядка, з якого видно, що робити.
+      // 502/503/504 — застосунок зараз перезапускається. Повідомляє про це
+      // той, хто вище нас: він почекає й спробує знову.
+      if (code === 502 || code === 503 || code === 504) {
+        return {code: code, restarting: true};
+      }
       if (code === 404) {
-        Logger.log("tgxPostLog_: HTTP 404 — такої адреси на сервері немає " +
-                   "(/api/leads/engagement-events). Схоже, систему ще не " +
-                   "задеплоїли після оновлення.");
+        Logger.log(tag + ": HTTP 404 — такої адреси на сервері немає (" + path +
+                   "). Схоже, систему ще не задеплоїли після оновлення.");
       } else {
-        Logger.log("tgxPostLog_: HTTP " + code + " — " +
+        Logger.log(tag + ": HTTP " + code + " — " +
                    tgxBrief_(res.getContentText()));
       }
       return {code: code};
     }
     return JSON.parse(res.getContentText());
   } catch (err) {
-    Logger.log("tgxPostLog_: " + err);
+    Logger.log(tag + " (спроба " + attempt + "): " + err);
     return null;
   }
 }
@@ -362,9 +398,13 @@ function tgxBrief_(text) {
 function tgxAccLog_(acc, res) {
   if (!res || !res.ok) {
     acc.failed++;
-    if (res && res.code === 404 && !acc.hint) {
+    if (!acc.hint && res && res.code === 404) {
       acc.hint = "👉 Задеплойте систему (.\\scripts\\deploy.ps1 -ApplyMigrations) " +
                  "і запустіть pushTgLogAll() ще раз — нічого не загубиться.";
+    } else if (!acc.hint && res && res.restarting) {
+      acc.hint = "👉 Сервер перезапускався (схоже, саме йшов деплой). Дочекайтесь, " +
+                 "доки сайт відкривається, і запустіть pushTgLogAll() ще раз — " +
+                 "нічого не загубиться.";
     }
     return;
   }
@@ -558,24 +598,7 @@ function tgxNewest_(a, b) {
 }
 
 function tgxPost_(rows) {
-  try {
-    var res = UrlFetchApp.fetch(tgEcoApiBase_() + "/api/leads/engagement-import", {
-      method: "post",
-      contentType: "application/json",
-      headers: {"x-leads-secret": tgEcoApiSecret_()},
-      payload: JSON.stringify({rows: rows}),
-      muteHttpExceptions: true
-    });
-    var code = res.getResponseCode();
-    if (code !== 200) {
-      Logger.log("tgxPost_: HTTP " + code + " — " + res.getContentText().slice(0, 300));
-      return null;
-    }
-    return JSON.parse(res.getContentText());
-  } catch (err) {
-    Logger.log("tgxPost_: " + err);
-    return null;
-  }
+  return tgxSend_("/api/leads/engagement-import", rows, "tgxPost_");
 }
 
 function tgxAccNew_() {

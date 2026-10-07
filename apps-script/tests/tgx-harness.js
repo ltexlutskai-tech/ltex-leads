@@ -14,6 +14,7 @@ function makeEnv(opts = {}) {
   const log = [];
   const props = Object.assign({}, opts.props || {});
   const posts = [];
+  const waits = [];
 
   const sheets = (opts.sheets || []).map((s) => {
     const rows = s.rows || [];
@@ -71,6 +72,9 @@ function makeEnv(opts = {}) {
         };
       },
     },
+    // Чекання не чекаємо насправді — лише записуємо, скільки просили. Інакше
+    // тест із трьома спробами по 15 секунд ішов би майже хвилину.
+    Utilities: { sleep: (ms) => waits.push(ms) },
     ScriptApp: { getProjectTriggers: () => [], newTrigger: () => { throw new Error("не треба"); } },
     console,
   };
@@ -117,7 +121,7 @@ function makeEnv(opts = {}) {
     }
   }
 
-  return { ctx, log, props, posts, run: (code) => vm.runInContext(code, ctx) };
+  return { ctx, log, props, posts, waits, run: (code) => vm.runInContext(code, ctx) };
 }
 
 module.exports = { makeEnv };
