@@ -434,6 +434,18 @@ test("перевірка приміток нічого не пише", () => {
   eq(env.posts[0].payload.dryRun, true, "dryRun");
 });
 
+test("без картки — розклад і перші рядки поіменно", () => {
+  const env = makeEnv({
+    sheets: [{ name: "🏭 Клієнти 1С", firstRow: 5, rows: [cells({ 1: "1C-4741", 19: "x" })] }],
+    post: () => ({ ok: true, received: 1, created: 0, unmatched: 1, unmatched1C: 1,
+                   unmatchedLeads: 0, unmatchedSamples: [{ id: "1C-4741", sheet: "Клієнти 1С" }] }),
+  });
+  const text = env.run("pushSheetNotesCheck()");
+  for (const want of ["Не знайшли картку: 1 (клієнти 1С 1 · ліди 0)", "1C-4741 · Клієнти 1С"]) {
+    if (text.indexOf(want) === -1) throw new Error("немає «" + want + "» у:\n" + text);
+  }
+});
+
 console.log("\nЗвірка всієї історії");
 test("по рядку на кожен день і дописування відсутнього", () => {
   const post = (p) => {
