@@ -380,5 +380,86 @@ test("свіжі рядки журналу їдуть у систему, ста�
   eq(env.posts[0].payload.rows.map((r) => r.code1C), ["1C-2"], "лише свіже");
 });
 
+console.log("\nПримітки менеджерів → система (перед закриттям таблиць, 12.10)");
+
+/** Рядок аркуша клієнтів: колонки за номером (1-based) → значення. */
+function cells(map) {
+  const r = [];
+  for (const [col, v] of Object.entries(map)) r[Number(col) - 1] = v;
+  return r;
+}
+
+test("1С: примітка з файлу менеджера переважає порожню головну", () => {
+  const env = makeEnv({
+    sheets: [
+      { name: "🔒 2026", firstRow: 5, rows: [
+        cells({ 1: "LTEX-20261001-0001", 7: "0671112233", 11: "Дунас Богдан", 12: "Очікує",
+                18: "НПТ", 19: "передзвонити" }),
+        cells({ 1: "LTEX-20261001-0002", 7: "0671112234", 12: "Очікує" }),   // без приміток
+      ] },
+      { name: "🏭 Клієнти 1С", firstRow: 5, rows: [
+        cells({ 1: "1C-4741", 7: "0501112233", 11: "Захарчук Олександра", 12: "Очікує" }),
+      ] },
+    ],
+    files: {
+      f1: [{ name: "🏭 Клієнти 1С", firstRow: 5, rows: [
+        cells({ 1: "1C-4741", 7: "0501112233", 9: "дзвонила 01.10", 17: "без змін", 18: "бере взуття" }),
+      ] }],
+    },
+    managers: { "Захарчук Олександра": { fileId: "f1" } },
+    post: (p) => ({ ok: true, received: p.rows.length, created: p.rows.length,
+                    empty: 0, unmatched: 0, duplicates: 0, leadFields: 0 }),
+  });
+  env.run("pushSheetNotesAll()");
+  eq(env.posts.length, 1, "запитів");
+  eq(env.posts[0].url.endsWith("/api/leads/sheet-notes"), true, "адреса");
+  const rows = env.posts[0].payload.rows;
+  eq(rows.length, 2, "лише рядки з примітками");
+  const lead = rows.find((r) => r.externalId === "LTEX-20261001-0001");
+  eq([lead.newStatus, lead.comment, lead.manager, lead.actionStatus],
+     ["НПТ", "передзвонити", "Дунас Богдан", null], "лід");
+  const c = rows.find((r) => r.code1C === "1C-4741");
+  eq([c.contact, c.newStatus, c.comment, c.manager],
+     ["дзвонила 01.10", "без змін", "бере взуття", "Захарчук Олександра"], "клієнт 1С");
+});
+
+test("перевірка приміток нічого не пише", () => {
+  const env = makeEnv({
+    sheets: [{ name: "🔒 2026", firstRow: 5, rows: [
+      cells({ 1: "LTEX-20261001-0001", 19: "x" }),
+    ] }],
+    post: () => ({ ok: true, received: 1, created: 1 }),
+  });
+  env.run("pushSheetNotesCheck()");
+  eq(env.posts[0].payload.dryRun, true, "dryRun");
+});
+
+console.log("\nЗвірка всієї історії");
+test("по рядку на кожен день і дописування відсутнього", () => {
+  const post = (p) => {
+    if (!p.dryRun) return { ok: true, received: p.rows.length, created: p.rows.length };
+    return { ok: true, details: p.rows.map((r, i) => r.code1C === "1C-3"
+      ? { i, verdict: "missing", kind: "sent_first" }
+      : { i, verdict: "duplicate", kind: "sent_first", existingAt: r.at }) };
+  };
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [
+      row(new Date(2026, 9, 7, 9, 0), "1C-1", "вперше"),
+      row(new Date(2026, 9, 8, 9, 0), "1C-2", "вперше"),
+      row(new Date(2026, 9, 8, 10, 0), "1C-3", "вперше"),
+    ] }],
+    post,
+  });
+  const text = env.run("tgCompareAllApply()");
+  for (const want of ["✅ 07.10.2026 · надіслано 1→1", "⚠️ 08.10.2026 · надіслано 2→1",
+                      "немає в системі 1", "Дописано в систему подій: 1"]) {
+    if (text.indexOf(want) === -1) throw new Error("немає «" + want + "» у:\n" + text);
+  }
+  const writes = env.posts.filter((p) => !p.payload.dryRun);
+  eq(writes.length, 1, "записів");
+  eq(writes[0].payload.rows.map((r) => r.code1C), ["1C-3"], "лише відсутнє");
+  eq(env.props.TGC_ALL_FROM, undefined, "курсор прибрано");
+});
+
 console.log("\n" + (fail ? "ЗБОЇВ: " + fail : "усе ок") + ", перевірок: " + (pass + fail));
 process.exit(fail ? 1 : 0);

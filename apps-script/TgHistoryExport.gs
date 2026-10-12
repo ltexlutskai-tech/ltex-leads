@@ -28,6 +28,9 @@
 //   tgCompareDay("07.10.2026", true) — те саме + дописати в систему відсутнє
 //   tgCompareWeek() / tgCompareWeekApply() — останні 7 днів, без параметрів
 //   tgCompareYesterday() / tgCompareYesterdayApply() — за вчора
+//   tgCompareAll() / tgCompareAllApply() — уся історія, по рядку на день
+//   pushSheetNotesCheck() / pushSheetNotesAll() — примітки менеджерів
+//                     («2026», «Клієнти 1С» і файли менеджерів) → система
 //
 //   Переноси РІЗНІ й потрібні обидва. Колонка статусу — одна клітинка на
 //   контакт, остання правда. Журнал — кожне натискання кнопки окремим рядком.
@@ -546,58 +549,12 @@ function tgCompareDay(day, apply) {
     return;
   }
 
-  // ── Рядки журналу за день — так само, як їх бачить ранковий звіт ──
-  var items = [];
-  var sheets = tgxLogSheets_();
-  for (var s = 0; s < sheets.length; s++) {
-    var sh = sheets[s], last = sh.getLastRow();
-    if (last < 2) continue;
-    var vals = sh.getRange(2, 1, last - 1, 9).getValues();
-    for (var i = 0; i < vals.length; i++) {
-      var d = tgcAsDate_(vals[i][0]);
-      if (!d || d < range.from || d >= range.to) continue;
-      var note = tgStr_(vals[i][8]);
-      var src  = tgStr_(vals[i][7]);
-      var cat  = tgcCategory_(note, src);
-      if (!cat) continue;                               // не рахує й ранковий звіт
-      var id = tgStr_(vals[i][1]);
-      var payload = {
-        at: d.toISOString(),
-        phone: tgxCut_(tgStr_(vals[i][3]), 80),
-        region: tgxCut_(tgStr_(vals[i][4]), 120),
-        source: tgxCut_(src, 200),
-        note: tgxCut_(note, 400)
-      };
-      if (/^1[CС]-/i.test(id)) payload.code1C = tgxCut_(id, 120);
-      else if (id) payload.externalId = tgxCut_(id, 120);
-      items.push({cat: cat, at: d, id: id, name: tgStr_(vals[i][2]),
-                  mgr: tgStr_(vals[i][5]), note: note, payload: payload});
-    }
-  }
+  var items = tgcCollect_(range.from, range.to);
   if (!items.length) {
     Logger.log("За " + range.label + " у журналі таблиці подій немає.");
     return;
   }
-
-  // ── Що каже система про кожен рядок ──
-  var failed = 0;
-  for (var b = 0; b < items.length; b += TGX_BATCH) {
-    var part = items.slice(b, b + TGX_BATCH);
-    var res = tgxSend_("/api/leads/engagement-events",
-                       part.map(function (it) { return it.payload; }),
-                       "tgCompareDay", {dryRun: true});
-    if (!res || !res.ok || !res.details) { failed++; continue; }
-    for (var k = 0; k < res.details.length; k++) {
-      var v = res.details[k];
-      if (part[v.i]) part[v.i].verdict = v;
-    }
-  }
-  if (failed) {
-    Logger.log("❌ Система не відповіла на " + failed + " пачк(и). Якщо щойно був деплой — " +
-               "дочекайтесь, доки сайт відкривається, і запустіть ще раз. Якщо система " +
-               "відповідає, а вердиктів немає — її ще не оновили до версії зі звіркою.");
-    return;
-  }
+  if (tgcAsk_(items) === false) return;
 
   // ── Підсумок по видах — як у ранковому звіті, з розкладом ──
   var out = ["🔎 ЗВІРКА ЗА " + range.label + ": журнал таблиці ↔ система", ""];
@@ -662,14 +619,8 @@ function tgCompareDay(day, apply) {
   // ── Дописати відсутнє ──
   var missing = items.filter(function (it) { return it.state.kind === "missing"; });
   if (apply === true && missing.length) {
-    var made = 0, bad = 0;
-    for (var m = 0; m < missing.length; m += TGX_BATCH) {
-      var r = tgxPostLog_(missing.slice(m, m + TGX_BATCH).map(function (it) { return it.payload; }));
-      if (r && r.ok) made += r.created || 0; else bad++;
-    }
     out.push("");
-    out.push(bad ? "⚠️ Дописано в систему: " + made + ", пачок не прийнято: " + bad
-                 : "✅ Дописано в систему подій: " + made);
+    out.push(tgcApply_(missing));
   } else if (missing.length) {
     out.push("");
     out.push("Дописати відсутнє (" + missing.length + "): tgCompareDay(\"" +
@@ -679,6 +630,76 @@ function tgCompareDay(day, apply) {
   var text = out.join("\n");
   Logger.log(text);
   return text;
+}
+
+
+// Рядки журналу (чинного й архівів) у межах [from, to) — так само, як їх
+// бачить ранковий звіт. from/to = null — увесь журнал.
+function tgcCollect_(from, to) {
+  var items = [];
+  var sheets = tgxLogSheets_();
+  for (var s = 0; s < sheets.length; s++) {
+    var sh = sheets[s], last = sh.getLastRow();
+    if (last < 2) continue;
+    var vals = sh.getRange(2, 1, last - 1, 9).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      var d = tgcAsDate_(vals[i][0]);
+      if (!d) continue;
+      if (from && (d < from || d >= to)) continue;
+      var note = tgStr_(vals[i][8]);
+      var src  = tgStr_(vals[i][7]);
+      var cat  = tgcCategory_(note, src);
+      if (!cat) continue;                               // не рахує й ранковий звіт
+      var id = tgStr_(vals[i][1]);
+      var payload = {
+        at: d.toISOString(),
+        phone: tgxCut_(tgStr_(vals[i][3]), 80),
+        region: tgxCut_(tgStr_(vals[i][4]), 120),
+        source: tgxCut_(src, 200),
+        note: tgxCut_(note, 400)
+      };
+      if (/^1[CС]-/i.test(id)) payload.code1C = tgxCut_(id, 120);
+      else if (id) payload.externalId = tgxCut_(id, 120);
+      items.push({cat: cat, at: d, id: id, name: tgStr_(vals[i][2]),
+                  mgr: tgStr_(vals[i][5]), note: note, payload: payload});
+    }
+  }
+  return items;
+}
+
+// Питає систему про кожен рядок (перевірка без запису). false — система не
+// відповіла, причину вже записано в журнал виконання.
+function tgcAsk_(items) {
+  var failed = 0;
+  for (var b = 0; b < items.length; b += TGX_BATCH) {
+    var part = items.slice(b, b + TGX_BATCH);
+    var res = tgxSend_("/api/leads/engagement-events",
+                       part.map(function (it) { return it.payload; }),
+                       "tgCompare", {dryRun: true});
+    if (!res || !res.ok || !res.details) { failed++; continue; }
+    for (var k = 0; k < res.details.length; k++) {
+      var v = res.details[k];
+      if (part[v.i]) part[v.i].verdict = v;
+    }
+  }
+  if (failed) {
+    Logger.log("❌ Система не відповіла на " + failed + " пачк(и). Якщо щойно був деплой — " +
+               "дочекайтесь, доки сайт відкривається, і запустіть ще раз. Якщо система " +
+               "відповідає, а вердиктів немає — її ще не оновили до версії зі звіркою.");
+    return false;
+  }
+  return true;
+}
+
+// Дописати в систему те, чого їй бракує. Повертає рядок для звіту.
+function tgcApply_(missing) {
+  var made = 0, bad = 0;
+  for (var m = 0; m < missing.length; m += TGX_BATCH) {
+    var r = tgxPostLog_(missing.slice(m, m + TGX_BATCH).map(function (it) { return it.payload; }));
+    if (r && r.ok) made += r.created || 0; else bad++;
+  }
+  return bad ? "⚠️ Дописано в систему: " + made + ", пачок не прийнято: " + bad
+             : "✅ Дописано в систему подій: " + made;
 }
 
 // Випадачка редактора Apps Script показує лише функції БЕЗ аргументів, тож
@@ -697,6 +718,233 @@ function tgcCompareLastDays_(n, apply) {
     if (t) parts.push(t);
   }
   return parts.join("\n\n");
+}
+
+
+// ── Уся історія: кожен день журналу ──────────────────────────
+// tgCompareAll()      — по рядку на кожен день: таблиця / система цього дня,
+//                       і скільки рядків чому розійшлось. Нічого не пише.
+// tgCompareAllApply() — те саме + дописує в систему все відсутнє.
+// Довгий журнал не встигає за 6 хв: запуск сам каже «запустіть ще раз» і
+// продовжує з того дня, де спинився.
+var TGC_ALL_CURSOR = "TGC_ALL_FROM";
+var TGC_BUDGET_MS  = 4 * 60 * 1000;
+
+function tgCompareAll()      { return tgcCompareAll_(false); }
+function tgCompareAllApply() { return tgcCompareAll_(true); }
+function tgCompareAllReset() { tgSetProp_(TGC_ALL_CURSOR, ""); Logger.log("Курсор звірки скинуто."); }
+
+function tgcCompareAll_(apply) {
+  if (!tgEcoApiBase_() || !tgEcoApiSecret_()) {
+    Logger.log("❌ Спершу: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
+    return;
+  }
+  var t0 = Date.now();
+  var fromKey = tgProp_(TGC_ALL_CURSOR) || "";
+  var all = tgcCollect_(null, null);
+
+  // Групуємо за днем (у часовому поясі скрипта, як ранковий звіт)
+  var byDay = {}, days = [];
+  all.forEach(function (it) {
+    var k = it.at.getFullYear() * 10000 + (it.at.getMonth() + 1) * 100 + it.at.getDate();
+    if (fromKey && k < +fromKey) return;
+    if (!byDay[k]) { byDay[k] = []; days.push(k); }
+    byDay[k].push(it);
+  });
+  days.sort(function (a, b) { return a - b; });
+
+  var out = ["🔎 ЗВІРКА ВСІЄЇ ІСТОРІЇ: журнал таблиці ↔ система",
+             "Формат: таблиця → є в системі цього дня. Нижче кожного дня — чому решта.", ""];
+  var tot = {other: 0, missing: 0, nocard: 0, moved: 0, rows: 0};
+  var allMissing = [], stopped = false;
+
+  for (var d = 0; d < days.length; d++) {
+    if (Date.now() - t0 > TGC_BUDGET_MS) {
+      tgSetProp_(TGC_ALL_CURSOR, String(days[d]));
+      stopped = true;
+      break;
+    }
+    var items = byDay[days[d]];
+    var day0 = items[0].at;
+    var range = {from: new Date(day0.getFullYear(), day0.getMonth(), day0.getDate()),
+                 to: new Date(day0.getFullYear(), day0.getMonth(), day0.getDate() + 1)};
+    if (tgcAsk_(items) === false) { tgSetProp_(TGC_ALL_CURSOR, String(days[d])); return; }
+
+    var c = {};
+    TGC_KINDS.forEach(function (k) { c[k.key] = {t: 0, s: 0}; });
+    var why = {other: 0, missing: 0, nocard: 0, moved: 0};
+    items.forEach(function (it) {
+      it.state = tgcState_(it, range);
+      c[it.cat].t++;
+      if (it.state.kind === "same") c[it.cat].s++;
+      else why[it.state.kind]++;
+      if (it.state.kind === "missing") allMissing.push(it);
+      var m = it.verdict && it.verdict.manager;
+      if (m && it.mgr && tgcNorm_(m).indexOf(tgcNorm_(it.mgr)) !== 0 &&
+          tgcNorm_(it.mgr).indexOf(tgcNorm_(m)) !== 0) why.moved++;
+    });
+    tot.rows += items.length;
+    tot.other += why.other; tot.missing += why.missing;
+    tot.nocard += why.nocard; tot.moved += why.moved;
+
+    var line = tgcDate_(day0) + " · надіслано " + c.sent.t + "→" + c.sent.s +
+               " · бот " + c.bot.t + "→" + c.bot.s +
+               " · приєднались " + c.joined.t + "→" + c.joined.s +
+               (c.repeat.t ? " · повторно " + c.repeat.t + "→" + c.repeat.s : "");
+    var ok = !why.other && !why.missing && !why.nocard;
+    out.push((ok ? "✅ " : "⚠️ ") + line);
+    if (!ok) {
+      out.push("      " + [
+        why.missing ? "немає в системі " + why.missing : "",
+        why.other   ? "у системі іншим днем " + why.other + " (здебільшого «вже надсилали раніше»)" : "",
+        why.nocard  ? "немає картки " + why.nocard : ""
+      ].filter(String).join(" · "));
+    }
+    if (why.moved) out.push("      інший менеджер у системі: " + why.moved);
+  }
+
+  out.push("");
+  out.push("РАЗОМ рядків: " + tot.rows + " · немає в системі " + tot.missing +
+           " · іншим днем " + tot.other + " · без картки " + tot.nocard +
+           " · інший менеджер " + tot.moved);
+
+  if (apply === true && allMissing.length) {
+    out.push(tgcApply_(allMissing));
+  } else if (allMissing.length) {
+    out.push("Дописати відсутнє: tgCompareAllApply");
+  }
+  out.push("Подробиці по рядках конкретного дня: tgCompareDay(\"дд.мм.рррр\").");
+  if (stopped) {
+    out.push("");
+    out.push("⏳ Не встиг усе за один запуск — запустіть ще раз, продовжу з " +
+             tgProp_(TGC_ALL_CURSOR) + ".");
+  } else {
+    tgSetProp_(TGC_ALL_CURSOR, "");
+  }
+
+  var text = out.join("\n");
+  Logger.log(text);
+  return text;
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  ПРИМІТКИ МЕНЕДЖЕРІВ → СИСТЕМА                           ║
+// ╚══════════════════════════════════════════════════════════╝
+// Перед закриттям таблиць (рішення user 12.10) усе, що менеджери писали
+// РУКАМИ, переїжджає в історію карток системи: «Перший контакт»,
+// «Активність», «Статус», «Оновлений статус», «Коментар».
+//
+// Аркуші: «🔒 2026» (ліди) і «🏭 Клієнти 1С». Для клієнтів 1С читаємо ще й
+// ФАЙЛИ МЕНЕДЖЕРІВ: менеджер пише там, а назад у головну таблицю ці колонки
+// не повертаються (onManagerEdit синхронізує лише аркуш лідів). Значення з
+// файлу менеджера переважають — вони свіжіші.
+//
+//   pushSheetNotesCheck() — скільки поїде, нічого не пише
+//   pushSheetNotesAll()   — перенести (повторний запуск нічого не дублює)
+
+function pushSheetNotesCheck() { return tgxPushNotes_(true); }
+function pushSheetNotesAll()   { return tgxPushNotes_(false); }
+
+// Позиції колонок: головна таблиця (обидва аркуші) і файл менеджера (1С)
+var TGN_MAIN = {id: 1, phone: 7, contact: 9, activity: 10, manager: 11, status: 12,
+                newStatus: 18, comment: 19};
+var TGN_MGR  = {id: 1, phone: 7, contact: 9, activity: 10, status: 11,
+                newStatus: 17, comment: 18};
+
+function tgxPushNotes_(dryRun) {
+  if (!tgEcoApiBase_() || !tgEcoApiSecret_()) {
+    Logger.log("❌ Спершу: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
+    return;
+  }
+  var rows = {}, order = [], seen = {main2026: 0, main1C: 0, files: 0};
+
+  function put(id, row, override) {
+    if (!rows[id]) { rows[id] = row; order.push(id); return; }
+    for (var k in row) {
+      if (tgStr_(row[k]) && (override || !tgStr_(rows[id][k]))) rows[id][k] = row[k];
+    }
+  }
+  function read(sh, cols, start, sheetLabel, managerName, override, counter) {
+    var last = sh.getLastRow();
+    if (last < start) return;
+    var width = Math.max(cols.comment, cols.newStatus, cols.manager || 0);
+    var vals = sh.getRange(start, 1, last - start + 1, width).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      var v = vals[i], id = tgStr_(v[cols.id - 1]);
+      if (!id) continue;
+      var status = tgStr_(v[cols.status - 1]);
+      if (status === "Очікує") status = "";            // типове значення, не примітка
+      var row = {
+        sheet: sheetLabel,
+        manager: managerName || (cols.manager ? tgStr_(v[cols.manager - 1]) : ""),
+        phone: tgxCut_(tgStr_(v[cols.phone - 1]), 80),
+        contact: tgxCut_(tgxCellText_(v[cols.contact - 1]), 500),
+        activity: tgxCut_(tgxCellText_(v[cols.activity - 1]), 500),
+        actionStatus: tgxCut_(status, 500),
+        newStatus: tgxCut_(tgStr_(v[cols.newStatus - 1]), 200),
+        comment: tgxCut_(tgStr_(v[cols.comment - 1]), 2000)
+      };
+      if (/^1[CС]-/i.test(id)) row.code1C = tgxCut_(id, 120);
+      else row.externalId = tgxCut_(id, 120);
+      put(id, row, override);
+      seen[counter]++;
+    }
+  }
+
+  var ss = tgSS_(MAIN_FILE_ID);
+  var main = ss.getSheets().filter(function (sh) { return tgxWanted_(sh.getName()) &&
+    sh.getName().indexOf("2026") >= 0; })[0];
+  if (main) read(main, TGN_MAIN, DATA_START, "2026", "", false, "main2026");
+  var reg = tg1CSheetName_() ? ss.getSheetByName(tg1CSheetName_()) : null;
+  if (reg) read(reg, TGN_MAIN, DATA_START, "Клієнти 1С", "", false, "main1C");
+
+  var managers = tgManagers_(), fileErr = [];
+  for (var name in managers) {
+    var fileId = managers[name].fileId;
+    if (!fileId) continue;
+    try {
+      var msh = tgSS_(fileId).getSheetByName(tg1CSheetName_());
+      if (msh) read(msh, TGN_MGR, TG_MGR_DATA_START, "Клієнти 1С", name, true, "files");
+    } catch (err) { fileErr.push(name + ": " + err); }
+  }
+
+  var payload = order.map(function (id) { return rows[id]; }).filter(function (r) {
+    return r.contact || r.activity || r.actionStatus || r.newStatus || r.comment;
+  });
+
+  var acc = {received: 0, empty: 0, unmatched: 0, created: 0, duplicates: 0, leadFields: 0, failed: 0};
+  for (var b = 0; b < payload.length; b += TGX_BATCH) {
+    var res = tgxSend_("/api/leads/sheet-notes", payload.slice(b, b + TGX_BATCH),
+                       "pushSheetNotes", dryRun ? {dryRun: true} : null);
+    if (!res || !res.ok) { acc.failed++; continue; }
+    for (var k in acc) if (k !== "failed") acc[k] += res[k] || 0;
+  }
+
+  var head = acc.failed && !acc.received ? "❌ Система не прийняла жодної пачки — оновіть систему або спробуйте пізніше."
+           : dryRun ? "🔎 ПЕРЕВІРКА (нічого не записано)"
+           : acc.failed ? "⚠️ Перенесено частково" : "✅ Примітки перенесено";
+  var text = [
+    head,
+    "Прочитано рядків: «2026» " + seen.main2026 + " · «Клієнти 1С» (головна) " + seen.main1C +
+      " · файли менеджерів " + seen.files,
+    "З примітками: " + payload.length,
+    (dryRun ? "Буде записано в історію карток: " : "Записано в історію карток: ") + acc.created,
+    "Уже були: " + acc.duplicates,
+    "Не знайшли картку: " + acc.unmatched,
+    dryRun ? "" : "Лідам заповнено порожній «Оновлений статус / Коментар»: " + acc.leadFields,
+    acc.failed ? "Пачок не прийнято: " + acc.failed : "",
+    fileErr.length ? "Файли менеджерів, які не відкрились: " + fileErr.join("; ") : "",
+    dryRun ? "Перенести: pushSheetNotesAll" : ""
+  ].filter(String).join("\n");
+  Logger.log(text);
+  return text;
+}
+
+// Дата в клітинці («Перший контакт») — текстом, як її бачить людина
+function tgxCellText_(v) {
+  if (v instanceof Date && !isNaN(v.getTime())) return tgcDate_(v);
+  return tgStr_(v);
 }
 
 // Вид рядка — рівно за правилами ранкового звіту (TelegramReport.gs)
