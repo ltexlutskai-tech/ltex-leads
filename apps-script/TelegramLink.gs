@@ -821,6 +821,10 @@ function handleTgClick(e) {
     if (p.act === "start" || p.act === "join" ||
         p.act === "left"  || p.act === "blocked") return tgEcoEvent_(p);
 
+    // Зміни залучення, зроблені в системі (картка, /тг, ручні позначки) —
+    // SystemSync.gs. Система головна (рішення user 12.10).
+    if (p.act === "sys" && typeof tgSysEvent_ === "function") return tgSysEvent_(p);
+
     // Дані для статичної сторінки на GitHub Pages
     if (p.fmt === "json" || p.a === "tgjson") return handleTgJson_(p);
 
@@ -1033,10 +1037,19 @@ function tgApplyEcoEvent_(act, id, tgId, nick, fullName) {
   var twin = tgTwinFromDups_(tgStr_(d[COL.DUPS - 1]));
   if (twin && typeof tg1CMirrorTwin_ === "function") tg1CMirrorTwin_(twin, vals);
 
-  tgLogAppend_([new Date(), id, tgStr_(d[COL.NAME - 1]), tgStr_(d[COL.PHONE - 1]),
-                tgStr_(d[COL.REGION - 1]), manager, tgStr_(d[TG_MAIN_LINK - 1]),
-                "бот системи",
-                tgEcoActLabel_(act).toLowerCase() + ": " + (label || tgId)]);
+  // Ту саму подію тепер може принести й SystemSync.gs (система шле в таблицю
+  // все, що в ній сталось). Щоб ранковий звіт не рахував її двічі: вступ
+  // пишемо лише, якщо рядок ще не «Приєднався»; відкриття бота — не частіше
+  // разу на 10 хв (12.10).
+  var dupLog = (act === "join" && cur === TG_STATUS_JOINED) ||
+               (act === "start" && typeof tgsRecentLog_ === "function" &&
+                tgsRecentLog_(id, "відкрив бота", new Date()));
+  if (!dupLog) {
+    tgLogAppend_([new Date(), id, tgStr_(d[COL.NAME - 1]), tgStr_(d[COL.PHONE - 1]),
+                  tgStr_(d[COL.REGION - 1]), manager, tgStr_(d[TG_MAIN_LINK - 1]),
+                  "бот системи",
+                  tgEcoActLabel_(act).toLowerCase() + ": " + (label || tgId)]);
+  }
 
   // Втрату менеджер має побачити в той самий день, а не наткнутись на неї у
   // таблиці через тиждень: саме зараз ще є про що поговорити з клієнтом.

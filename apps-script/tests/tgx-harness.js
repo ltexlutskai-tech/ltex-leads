@@ -16,33 +16,41 @@ function makeEnv(opts = {}) {
   const posts = [];
   const waits = [];
 
-  const sheets = (opts.sheets || []).map((s) => {
+  // firstRow — з якого рядка дані (журнал — з 2-го, аркуші клієнтів — з 5-го)
+  const mkSheet = (s) => {
     const rows = s.rows || [];
+    const first = s.firstRow || 2;
     return {
       getName: () => s.name,
-      // 1 — заголовок, дані з 2-го
-      getLastRow: () => (rows.length ? rows.length + 1 : 1),
+      getLastRow: () => (rows.length ? rows.length + first - 1 : first - 1),
       getLastColumn: () => 9,
       getRange: (row, col, nr, nc) => ({
         getValues() {
           const out = [];
           for (let r = 0; r < nr; r++) {
-            const line = rows[row - 2 + r] || new Array(9).fill("");
-            out.push(line.slice(col - 1, col - 1 + nc));
+            const line = rows[row - first + r] || [];
+            const full = [];
+            for (let c = 0; c < col - 1 + nc; c++) full.push(line[c] === undefined ? "" : line[c]);
+            out.push(full.slice(col - 1, col - 1 + nc));
           }
           return out;
         },
       }),
     };
+  };
+  const sheets = (opts.sheets || []).map(mkSheet);
+  // Файли менеджерів: id → аркуші
+  const files = {};
+  for (const id of Object.keys(opts.files || {})) files[id] = opts.files[id].map(mkSheet);
+  const book = (list) => ({
+    getSheets: () => list,
+    getSheetByName: (n) => list.find((s) => s.getName() === n) || null,
   });
 
   const sandbox = {
     Logger: { log: (m) => log.push(String(m)) },
     SpreadsheetApp: {
-      openById: () => ({
-        getSheets: () => sheets,
-        getSheetByName: (n) => sheets.find((s) => s.getName() === n) || null,
-      }),
+      openById: (id) => book(files[id] || sheets),
     },
     PropertiesService: {
       getScriptProperties: () => ({
@@ -98,8 +106,12 @@ function makeEnv(opts = {}) {
     function tgSS_(id) { return SpreadsheetApp.openById(id); }
     function tgEcoApiBase_() { return "https://new.ltex.com.ua"; }
     function tgEcoApiSecret_() { return "secret"; }
+    var TG_MGR_DATA_START = 5;
+    function tg1CSheetName_() { return "🏭 Клієнти 1С"; }
+    function tgManagers_() { return MANAGERS_; }
   `;
 
+  sandbox.MANAGERS_ = opts.managers || {};
   const ctx = vm.createContext(sandbox);
   vm.runInContext(prelude, ctx);
   vm.runInContext(
@@ -113,7 +125,9 @@ function makeEnv(opts = {}) {
   // віддає з клітинки справжній Date), тож переносимо дати в реальність
   // пісочниці, інакше тест перевіряв би артефакт, а не код.
   const mkDate = vm.runInContext("(function(ms){return new Date(ms)})", ctx);
-  for (const s of opts.sheets || []) {
+  const allSheets = [...(opts.sheets || [])];
+  for (const id of Object.keys(opts.files || {})) allSheets.push(...opts.files[id]);
+  for (const s of allSheets) {
     for (const r of s.rows || []) {
       for (let i = 0; i < r.length; i++) {
         if (r[i] instanceof Date) r[i] = mkDate(r[i].getTime());
