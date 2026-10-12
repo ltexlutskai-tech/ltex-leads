@@ -876,6 +876,7 @@ function tgxPushNotes_(dryRun) {
       var status = tgStr_(v[cols.status - 1]);
       if (status === "Очікує") status = "";            // типове значення, не примітка
       var row = {
+        _name: tgStr_(v[2]),
         sheet: sheetLabel,
         manager: managerName || (cols.manager ? tgStr_(v[cols.manager - 1]) : ""),
         phone: tgxCut_(tgStr_(v[cols.phone - 1]), 80),
@@ -909,8 +910,14 @@ function tgxPushNotes_(dryRun) {
     } catch (err) { fileErr.push(name + ": " + err); }
   }
 
-  var payload = order.map(function (id) { return rows[id]; }).filter(function (r) {
+  var withNotes = order.map(function (id) { return rows[id]; }).filter(function (r) {
     return r.contact || r.activity || r.actionStatus || r.newStatus || r.comment;
+  });
+  // Імʼя — лише для нашого звіту, у систему не шлемо.
+  var payload = withNotes.map(function (r) {
+    var o = {};
+    for (var k in r) if (k !== "_name") o[k] = r[k];
+    return o;
   });
 
   var acc = {received: 0, empty: 0, unmatched: 0, created: 0, duplicates: 0, leadFields: 0,
@@ -921,9 +928,7 @@ function tgxPushNotes_(dryRun) {
                        "pushSheetNotes", dryRun ? {dryRun: true} : null);
     if (!res || !res.ok) { acc.failed++; continue; }
     for (var k in acc) if (k !== "failed") acc[k] += res[k] || 0;
-    (res.unmatchedSamples || []).forEach(function (x) {
-      if (samples.length < 40) samples.push(x);
-    });
+    (res.unmatchedSamples || []).forEach(function (x) { samples.push(x); });
   }
 
   var head = acc.failed && !acc.received ? "❌ Система не прийняла жодної пачки — оновіть систему або спробуйте пізніше."
@@ -938,9 +943,7 @@ function tgxPushNotes_(dryRun) {
     "Уже були: " + acc.duplicates,
     "Не знайшли картку: " + acc.unmatched +
       (acc.unmatched ? " (клієнти 1С " + acc.unmatched1C + " · ліди " + acc.unmatchedLeads + ")" : ""),
-    samples.length ? "Перші без картки (ID · аркуш):\n" + samples.map(function (x) {
-      return "   " + x.id + " · " + (x.sheet || "—");
-    }).join("\n") : "",
+    samples.length ? tgxExplainUnmatched_(samples, rows) : "",
     dryRun ? "" : "Лідам заповнено порожній «Оновлений статус / Коментар»: " + acc.leadFields,
     acc.failed ? "Пачок не прийнято: " + acc.failed : "",
     fileErr.length ? "Файли менеджерів, які не відкрились: " + fileErr.join("; ") : "",
@@ -948,6 +951,33 @@ function tgxPushNotes_(dryRun) {
   ].filter(String).join("\n");
   Logger.log(text);
   return text;
+}
+
+
+// Чому рядка немає в системі — за вмістом самого рядка таблиці. Правила
+// переносу лідів 03.10: «вилучити» (у «Статусі» чи «Оновленому статусі») і
+// рядки без номера свідомо НЕ переносили. Решта — те, що треба розібрати.
+function tgxExplainUnmatched_(samples, rows) {
+  var removed = [], noPhone = [], other = [];
+  samples.forEach(function (x) {
+    var r = rows[x.id] || {};
+    var st = (tgStr_(r.newStatus) + " " + tgStr_(r.actionStatus)).toLowerCase();
+    if (st.indexOf("вилуч") >= 0) removed.push(x);
+    else if (tgStr_(r.phone).replace(/\D/g, "").length < 9) noPhone.push(x);
+    else other.push(x);
+  });
+  var out = ["Чому без картки:",
+             "   «вилучити» — свідомо не переносили (рішення 03.10): " + removed.length,
+             "   без номера телефону — не переносили: " + noPhone.length,
+             "   інше — треба розібрати: " + other.length];
+  if (other.length) {
+    out.push("Перші з «інше» (ID · ПІБ · Оновлений статус):");
+    other.slice(0, 40).forEach(function (x) {
+      var r = rows[x.id] || {};
+      out.push("   " + x.id + " · " + (r._name || "—") + " · " + (tgStr_(r.newStatus) || "—"));
+    });
+  }
+  return out.join("\n");
 }
 
 // Дата в клітинці («Перший контакт») — текстом, як її бачить людина
