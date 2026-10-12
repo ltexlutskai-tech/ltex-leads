@@ -364,6 +364,7 @@ select option{background:#162030}
         <option>Google</option>
         <option>OLX</option>
         <option>Instagram</option>
+        <option>Facebook</option>
         <option>YouTube</option>
         <option>bricabrac</option>
         <option>Рекомендація</option>
@@ -619,7 +620,14 @@ async function doParse() {
       return kws.some(function(k){ return srcLow.indexOf(k) !== -1; });
     }
     if (categoryInSrc(p.category)) setF("fcat", p.category);
-    if (inSrc(p.channel)) setF("fch", p.channel);
+    function channelInSrc(ch) {
+      if (inSrc(ch)) return true;
+      var keywords = { "Facebook": ["facebook","фейсбу","fb.com","фб"] };
+      var kws = keywords[String(ch || "").trim()];
+      if (!kws || !hasText) return false;
+      return kws.some(function(k){ return srcLow.indexOf(k) !== -1; });
+    }
+    if (channelInSrc(p.channel)) setF("fch", p.channel);
     if (p.date) document.getElementById("fd").value = p.date;
     var n = [p.name, p.phone, p.region, p.city].filter(Boolean).length;
     setSt("Готово — " + n + " полів заповнено", "ok");
