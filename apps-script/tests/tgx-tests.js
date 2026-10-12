@@ -436,14 +436,34 @@ test("перевірка приміток нічого не пише", () => {
 
 test("без картки — розклад і перші рядки поіменно", () => {
   const env = makeEnv({
-    sheets: [{ name: "🏭 Клієнти 1С", firstRow: 5, rows: [cells({ 1: "1C-4741", 19: "x" })] }],
+    sheets: [{ name: "🏭 Клієнти 1С", firstRow: 5, rows: [cells({ 1: "1C-4741", 7: "0501112233", 19: "x" })] }],
     post: () => ({ ok: true, received: 1, created: 0, unmatched: 1, unmatched1C: 1,
                    unmatchedLeads: 0, unmatchedSamples: [{ id: "1C-4741", sheet: "Клієнти 1С" }] }),
   });
   const text = env.run("pushSheetNotesCheck()");
-  for (const want of ["Не знайшли картку: 1 (клієнти 1С 1 · ліди 0)", "1C-4741 · Клієнти 1С"]) {
+  for (const want of ["Не знайшли картку: 1 (клієнти 1С 1 · ліди 0)", "інше — треба розібрати: 1",
+                      "1C-4741 · —"]) {
     if (text.indexOf(want) === -1) throw new Error("немає «" + want + "» у:\n" + text);
   }
+});
+
+test("без картки розкладається за причинами: «вилучити», без номера, інше", () => {
+  const env = makeEnv({
+    sheets: [{ name: "🔒 2026", firstRow: 5, rows: [
+      cells({ 1: "LTEX-1", 3: "А", 7: "0671112233", 18: "вилучити", 19: "не цікаво" }),
+      cells({ 1: "LTEX-2", 3: "Б", 7: "", 19: "без номера" }),
+      cells({ 1: "LTEX-3", 3: "Василь", 7: "0671112299", 18: "НПТ" }),
+    ] }],
+    post: (p) => ({ ok: true, received: p.rows.length, unmatched: 3, unmatchedLeads: 3,
+                    unmatched1C: 0, unmatchedSamples: p.rows.map((r) => ({ id: r.externalId, sheet: "2026" })) }),
+  });
+  const text = env.run("pushSheetNotesCheck()");
+  for (const want of ["«вилучити» — свідомо не переносили (рішення 03.10): 1",
+                      "без номера телефону — не переносили: 1",
+                      "інше — треба розібрати: 1", "LTEX-3 · Василь · НПТ"]) {
+    if (text.indexOf(want) === -1) throw new Error("немає «" + want + "» у:\n" + text);
+  }
+  if (env.posts[0].payload.rows.some((r) => "_name" in r)) throw new Error("імʼя пішло в систему");
 });
 
 console.log("\nЗвірка всієї історії");
