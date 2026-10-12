@@ -963,7 +963,7 @@ function tgxPushNotes_(dryRun) {
     (dryRun ? "Лідів, яких немає в системі, буде створено: " : "Створено лідів, яких не було в системі: ") +
       (made.removed + made.noPhone + made.regular) +
       " (як «Відхилені»: «вилучити» " + made.removed + ", без номера " + made.noPhone +
-      " · у роботу: " + made.regular + ")",
+      " · «Опрацьовано»: " + made.regular + ")",
     (dryRun ? "Буде записано в історію карток: " : "Записано в історію карток: ") + acc.created,
     "Уже були: " + acc.duplicates,
     "Не знайшли картку: " + acc.unmatched +
