@@ -849,6 +849,9 @@ function pushSheetNotesAll()   { return tgxPushNotes_(false); }
 // Позиції колонок: головна таблиця (обидва аркуші) і файл менеджера (1С)
 var TGN_MAIN = {id: 1, phone: 7, contact: 9, activity: 10, manager: 11, status: 12,
                 newStatus: 18, comment: 19};
+// Аркуш лідів — ті самі колонки + поля ліда (див. read: cols.lead)
+var TGN_LEADS = {id: 1, phone: 7, contact: 9, activity: 10, manager: 11, status: 12,
+                 newStatus: 18, comment: 19, lead: true};
 var TGN_MGR  = {id: 1, phone: 7, contact: 9, activity: 10, status: 11,
                 newStatus: 17, comment: 18};
 
@@ -888,6 +891,18 @@ function tgxPushNotes_(dryRun) {
       };
       if (/^1[CС]-/i.test(id)) row.code1C = tgxCut_(id, 120);
       else row.externalId = tgxCut_(id, 120);
+      // Рядок ліда: усі його поля — щоб система створила ліда, якого в неї
+      // немає (рішення user 12.10: «вилучити» й без номера — як «Відхилені»).
+      if (cols.lead) {
+        row.name     = tgxCut_(tgStr_(v[2]), 300);
+        row.date     = tgxCut_(tgxCellText_(v[1]), 60);
+        row.category = tgxCut_(tgStr_(v[3]), 120);
+        row.region   = tgxCut_(tgStr_(v[4]), 120);
+        row.city     = tgxCut_(tgStr_(v[5]), 120);
+        row.interest = tgxCut_(tgStr_(v[7]), 2000);
+        row.channel  = tgxCut_(tgStr_(v[12]), 120);
+        row.site     = tgxCut_(tgStr_(v[13]), 1000);
+      }
       put(id, row, override);
       seen[counter]++;
     }
@@ -896,7 +911,7 @@ function tgxPushNotes_(dryRun) {
   var ss = tgSS_(MAIN_FILE_ID);
   var main = ss.getSheets().filter(function (sh) { return tgxWanted_(sh.getName()) &&
     sh.getName().indexOf("2026") >= 0; })[0];
-  if (main) read(main, TGN_MAIN, DATA_START, "2026", "", false, "main2026");
+  if (main) read(main, TGN_LEADS, DATA_START, "2026", "", false, "main2026");
   var reg = tg1CSheetName_() ? ss.getSheetByName(tg1CSheetName_()) : null;
   if (reg) read(reg, TGN_MAIN, DATA_START, "Клієнти 1С", "", false, "main1C");
 
@@ -910,8 +925,11 @@ function tgxPushNotes_(dryRun) {
     } catch (err) { fileErr.push(name + ": " + err); }
   }
 
+  // Рядки лідів «2026» шлемо ВСІ: ліда без приміток, якого немає в системі,
+  // теж треба створити — інакше він зник би разом із таблицею.
   var withNotes = order.map(function (id) { return rows[id]; }).filter(function (r) {
-    return r.contact || r.activity || r.actionStatus || r.newStatus || r.comment;
+    return r.sheet === "2026" ||
+           r.contact || r.activity || r.actionStatus || r.newStatus || r.comment;
   });
   // Імʼя — лише для нашого звіту, у систему не шлемо.
   var payload = withNotes.map(function (r) {
@@ -922,13 +940,16 @@ function tgxPushNotes_(dryRun) {
 
   var acc = {received: 0, empty: 0, unmatched: 0, created: 0, duplicates: 0, leadFields: 0,
              unmatched1C: 0, unmatchedLeads: 0, failed: 0};
+  var made = {removed: 0, noPhone: 0, regular: 0};
   var samples = [];
   for (var b = 0; b < payload.length; b += TGX_BATCH) {
     var res = tgxSend_("/api/leads/sheet-notes", payload.slice(b, b + TGX_BATCH),
-                       "pushSheetNotes", dryRun ? {dryRun: true} : null);
+                       "pushSheetNotes", {dryRun: !!dryRun, createMissing: true});
     if (!res || !res.ok) { acc.failed++; continue; }
     for (var k in acc) if (k !== "failed") acc[k] += res[k] || 0;
     (res.unmatchedSamples || []).forEach(function (x) { samples.push(x); });
+    var lc = res.leadsCreated || {};
+    made.removed += lc.removed || 0; made.noPhone += lc.noPhone || 0; made.regular += lc.regular || 0;
   }
 
   var head = acc.failed && !acc.received ? "❌ Система не прийняла жодної пачки — оновіть систему або спробуйте пізніше."
@@ -938,7 +959,11 @@ function tgxPushNotes_(dryRun) {
     head,
     "Прочитано рядків: «2026» " + seen.main2026 + " · «Клієнти 1С» (головна) " + seen.main1C +
       " · файли менеджерів " + seen.files,
-    "З примітками: " + payload.length,
+    "Надіслано рядків: " + payload.length,
+    (dryRun ? "Лідів, яких немає в системі, буде створено: " : "Створено лідів, яких не було в системі: ") +
+      (made.removed + made.noPhone + made.regular) +
+      " (як «Відхилені»: «вилучити» " + made.removed + ", без номера " + made.noPhone +
+      " · у роботу: " + made.regular + ")",
     (dryRun ? "Буде записано в історію карток: " : "Записано в історію карток: ") + acc.created,
     "Уже були: " + acc.duplicates,
     "Не знайшли картку: " + acc.unmatched +

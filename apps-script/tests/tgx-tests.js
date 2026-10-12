@@ -414,7 +414,10 @@ test("1С: примітка з файлу менеджера переважає 
   eq(env.posts.length, 1, "запитів");
   eq(env.posts[0].url.endsWith("/api/leads/sheet-notes"), true, "адреса");
   const rows = env.posts[0].payload.rows;
-  eq(rows.length, 2, "лише рядки з примітками");
+  // «2026» — усі рядки (лід без приміток, якого немає в системі, теж
+  // створюється); «Клієнти 1С» — лише з примітками.
+  eq(rows.length, 3, "рядків");
+  eq(env.posts[0].payload.createMissing, true, "створювати відсутніх лідів");
   const lead = rows.find((r) => r.externalId === "LTEX-20261001-0001");
   eq([lead.newStatus, lead.comment, lead.manager, lead.actionStatus],
      ["НПТ", "передзвонити", "Дунас Богдан", null], "лід");
@@ -464,6 +467,25 @@ test("без картки розкладається за причинами: «
     if (text.indexOf(want) === -1) throw new Error("немає «" + want + "» у:\n" + text);
   }
   if (env.posts[0].payload.rows.some((r) => "_name" in r)) throw new Error("імʼя пішло в систему");
+});
+
+test("рядок ліда несе свої поля — щоб система створила відсутнього", () => {
+  const env = makeEnv({
+    sheets: [{ name: "🔒 2026", firstRow: 5, rows: [
+      cells({ 1: "LTEX-20260314-2704", 2: "14.03.2026", 3: "Іванов Іван", 4: "Магазин",
+              5: "Волинська", 6: "Луцьк", 7: "0671112233", 8: "сток", 11: "Захарчук Олександра",
+              13: "OLX", 14: "https://x", 18: "вилучити", 19: "не цікаво" }),
+    ] }],
+    post: () => ({ ok: true, received: 1, created: 1,
+                   leadsCreated: { removed: 1, noPhone: 0, regular: 0 } }),
+  });
+  const text = env.run("pushSheetNotesAll()");
+  const r = env.posts[0].payload.rows[0];
+  eq([r.name, r.date, r.category, r.region, r.city, r.interest, r.channel, r.site],
+     ["Іванов Іван", "14.03.2026", "Магазин", "Волинська", "Луцьк", "сток", "OLX", "https://x"], "поля");
+  if (text.indexOf("Створено лідів, яких не було в системі: 1 (як «Відхилені»: «вилучити» 1") === -1) {
+    throw new Error(text);
+  }
 });
 
 console.log("\nЗвірка всієї історії");
