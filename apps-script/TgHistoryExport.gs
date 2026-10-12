@@ -913,12 +913,17 @@ function tgxPushNotes_(dryRun) {
     return r.contact || r.activity || r.actionStatus || r.newStatus || r.comment;
   });
 
-  var acc = {received: 0, empty: 0, unmatched: 0, created: 0, duplicates: 0, leadFields: 0, failed: 0};
+  var acc = {received: 0, empty: 0, unmatched: 0, created: 0, duplicates: 0, leadFields: 0,
+             unmatched1C: 0, unmatchedLeads: 0, failed: 0};
+  var samples = [];
   for (var b = 0; b < payload.length; b += TGX_BATCH) {
     var res = tgxSend_("/api/leads/sheet-notes", payload.slice(b, b + TGX_BATCH),
                        "pushSheetNotes", dryRun ? {dryRun: true} : null);
     if (!res || !res.ok) { acc.failed++; continue; }
     for (var k in acc) if (k !== "failed") acc[k] += res[k] || 0;
+    (res.unmatchedSamples || []).forEach(function (x) {
+      if (samples.length < 40) samples.push(x);
+    });
   }
 
   var head = acc.failed && !acc.received ? "❌ Система не прийняла жодної пачки — оновіть систему або спробуйте пізніше."
@@ -931,7 +936,11 @@ function tgxPushNotes_(dryRun) {
     "З примітками: " + payload.length,
     (dryRun ? "Буде записано в історію карток: " : "Записано в історію карток: ") + acc.created,
     "Уже були: " + acc.duplicates,
-    "Не знайшли картку: " + acc.unmatched,
+    "Не знайшли картку: " + acc.unmatched +
+      (acc.unmatched ? " (клієнти 1С " + acc.unmatched1C + " · ліди " + acc.unmatchedLeads + ")" : ""),
+    samples.length ? "Перші без картки (ID · аркуш):\n" + samples.map(function (x) {
+      return "   " + x.id + " · " + (x.sheet || "—");
+    }).join("\n") : "",
     dryRun ? "" : "Лідам заповнено порожній «Оновлений статус / Коментар»: " + acc.leadFields,
     acc.failed ? "Пачок не прийнято: " + acc.failed : "",
     fileErr.length ? "Файли менеджерів, які не відкрились: " + fileErr.join("; ") : "",
