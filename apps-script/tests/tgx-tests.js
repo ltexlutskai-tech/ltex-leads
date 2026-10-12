@@ -269,5 +269,116 @@ test("скидання курсора дає перечитати журнал �
   eq(env.props.TGX_LOG_CURSOR, undefined);
 });
 
+console.log("\nЗвірка дня: журнал таблиці ↔ система (сигнал user 12.10)");
+
+/** Відповідь системи в режимі перевірки: вердикт для кожного рядка пачки. */
+function verdicts(fn) {
+  return (p) => {
+    if (!p.dryRun) {
+      return { ok: true, received: p.rows.length, created: p.rows.length,
+               ignored: 0, unmatched: 0, duplicates: 0, skipped: 0 };
+    }
+    return { ok: true, received: p.rows.length, created: 0, ignored: 0,
+             unmatched: 0, duplicates: 0, skipped: 0,
+             details: p.rows.map((r, i) => Object.assign({ i }, fn(r, i))) };
+  };
+}
+
+test("питає систему лише про рядки потрібного дня й нічого не пише", () => {
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [
+      row(new Date(2026, 9, 6, 18, 0), "1C-1", "вперше"),
+      row(new Date(2026, 9, 7, 9, 0), "1C-2", "вперше"),
+      row(new Date(2026, 9, 7, 10, 0), "1C-2", "відкрив бота: @a", { source: "бот системи" }),
+      row(new Date(2026, 9, 8, 0, 1), "1C-3", "вперше"),
+    ] }],
+    post: verdicts(() => ({ verdict: "duplicate", kind: "x",
+                            existingAt: new Date(2026, 9, 7, 9, 0).toISOString() })),
+  });
+  env.run('tgCompareDay("07.10.2026")');
+  eq(env.posts.length, 1, "запитів");
+  eq(env.posts[0].payload.dryRun, true, "перевірка без запису");
+  eq(env.posts[0].payload.rows.map((r) => r.code1C), ["1C-2", "1C-2"], "рядки дня");
+});
+
+test("пояснює, чому «вперше» з таблиці в системі «повторно»", () => {
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [
+      row(new Date(2026, 9, 7, 9, 0), "1C-2", "вперше", { name: "Петренко", mgr: "Дунас Богдан" }),
+    ] }],
+    post: verdicts(() => ({ verdict: "duplicate", kind: "sent_first", target: "client",
+                            existingAt: new Date(2026, 9, 3, 12, 0).toISOString(),
+                            existingSource: "card", manager: "Захарчук Олександра" })),
+  });
+  const text = env.run('tgCompareDay("07.10.2026")');
+  for (const want of [
+    "📨 Надіслано вперше: у таблиці 1 → є в системі цього дня 0 · в системі іншим днем 1",
+    "вже надсилали 03.10.2026 (з картки системи)",
+    "у таблиці: Дунас Богдан · у системі: Захарчук Олександра",
+  ]) {
+    if (text.indexOf(want) === -1) throw new Error("немає «" + want + "» у:\n" + text);
+  }
+});
+
+test("відсутнє дописує лише з true і лише відсутні рядки", () => {
+  // Свої рядки для кожної пісочниці: makeEnv переносить дати в «свою» Date.
+  const rows = () => [
+    row(new Date(2026, 9, 7, 9, 0), "1C-2", "приєднався: @a"),
+    row(new Date(2026, 9, 7, 9, 5), "1C-3", "приєднався: @b"),
+  ];
+  const post = verdicts((r) => r.code1C === "1C-2"
+    ? { verdict: "missing", kind: "joined" }
+    : { verdict: "duplicate", kind: "joined",
+        existingAt: new Date(2026, 9, 7, 9, 5).toISOString() });
+
+  const dry = makeEnv({ sheets: [{ name: "_tg_log", rows: rows() }], post });
+  const dryText = dry.run('tgCompareDay("07.10.2026")');
+  eq(dry.posts.length, 1, "без true — лише перевірка");
+  if (dryText.indexOf('tgCompareDay("07.10.2026", true)') === -1) {
+    throw new Error("не підказали, як дописати: " + dryText);
+  }
+
+  const env = makeEnv({ sheets: [{ name: "_tg_log", rows: rows() }], post });
+  env.run('tgCompareDay("07.10.2026", true)');
+  eq(env.posts.length, 2, "перевірка + запис");
+  eq(env.posts[1].payload.dryRun, undefined, "другий запит — справжній");
+  eq(env.posts[1].payload.rows.map((r) => r.code1C), ["1C-2"], "лише відсутнє");
+});
+
+test("скасування не рахує ні ранковий звіт, ні звірка", () => {
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [
+      row(new Date(2026, 9, 7, 9, 0), "1C-2", "скасовано", { source: "скасування" }),
+    ] }],
+    post: verdicts(() => ({ verdict: "missing" })),
+  });
+  env.run('tgCompareDay("07.10.2026")');
+  eq(env.posts.length, 0, "запитів");
+});
+
+test("стара система без вердиктів — кажемо прямо, а не «усе збігається»", () => {
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [row(new Date(2026, 9, 7, 9, 0), "1C-2", "вперше")] }],
+  });
+  env.run('tgCompareDay("07.10.2026")');
+  const text = env.log.join("\n");
+  if (text.indexOf("ще не оновили") === -1) throw new Error(text);
+});
+
+console.log("\nЩогодинна догонка журналу");
+test("свіжі рядки журналу їдуть у систему, старі — ні", () => {
+  const now = Date.now();
+  const env = makeEnv({
+    sheets: [{ name: "_tg_log", rows: [
+      row(new Date(now - 10 * 86400000), "1C-1", "вперше"),
+      row(new Date(now - 3600000), "1C-2", "відкрив бота: @a"),
+    ] }],
+  });
+  env.run("tgxPushFreshLog_(new Date(Date.now() - 3 * 86400000))");
+  eq(env.posts.length, 1, "запитів");
+  eq(env.posts[0].payload.dryRun, undefined, "це справжній запис");
+  eq(env.posts[0].payload.rows.map((r) => r.code1C), ["1C-2"], "лише свіже");
+});
+
 console.log("\n" + (fail ? "ЗБОЇВ: " + fail : "усе ок") + ", перевірок: " + (pass + fail));
 process.exit(fail ? 1 : 0);

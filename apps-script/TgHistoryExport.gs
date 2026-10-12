@@ -21,6 +21,13 @@
 //   pushTgHistoryAll()          — колонки статусу: де людина зараз
 //   pushTgLogAll()              — ЖУРНАЛ «_tg_log» і його архіви: що сталось і коли
 //   installTgHistoryExportTrigger() — щогодинна догонка свіжих рядків
+//                                     (колонки + журнал за останні дні)
+//   tgCompareDay("07.10.2026")  — чому ранковий звіт і система показують
+//                                 різне: кожен рядок журналу за день і що про
+//                                 нього каже система (нічого не змінює)
+//   tgCompareDay("07.10.2026", true) — те саме + дописати в систему відсутнє
+//   tgCompareWeek() / tgCompareWeekApply() — останні 7 днів, без параметрів
+//   tgCompareYesterday() / tgCompareYesterdayApply() — за вчора
 //
 //   Переноси РІЗНІ й потрібні обидва. Колонка статусу — одна клітинка на
 //   контакт, остання правда. Журнал — кожне натискання кнопки окремим рядком.
@@ -333,9 +340,9 @@ var TGX_RETRIES    = 3;
  * такий код віддає Cloudflare, поки застосунок перезапускається. Чекаємо й
  * пробуємо знову; решту кодів віддаємо як є, бо на них чекання не допоможе.
  */
-function tgxSend_(path, rows, tag) {
+function tgxSend_(path, rows, tag, extra) {
   for (var attempt = 1; ; attempt++) {
-    var res = tgxSendOnce_(path, rows, tag, attempt);
+    var res = tgxSendOnce_(path, rows, tag, attempt, extra);
     if (!res || !res.restarting) return res;
     if (attempt > TGX_RETRIES) {
       Logger.log(tag + ": сервер так і не піднявся після " + TGX_RETRIES +
@@ -349,13 +356,15 @@ function tgxSend_(path, rows, tag) {
   }
 }
 
-function tgxSendOnce_(path, rows, tag, attempt) {
+function tgxSendOnce_(path, rows, tag, attempt, extra) {
   try {
+    var body = {rows: rows};
+    if (extra) for (var k in extra) body[k] = extra[k];
     var res = UrlFetchApp.fetch(tgEcoApiBase_() + path, {
       method: "post",
       contentType: "application/json",
       headers: {"x-leads-secret": tgEcoApiSecret_()},
-      payload: JSON.stringify({rows: rows}),
+      payload: JSON.stringify(body),
       muteHttpExceptions: true
     });
     var code = res.getResponseCode();
@@ -447,7 +456,39 @@ function tgHistoryExportJob() {
     if (acc.received) {
       Logger.log("Догонка: прийнято " + acc.received + ", подій " + acc.events);
     }
+    tgxPushFreshLog_(since);
   } catch (err) { Logger.log("tgHistoryExportJob: " + err); }
+}
+
+// Свіжі рядки ЖУРНАЛУ — у ту саму щогодинну догонку.
+//
+// Чому (сигнал user 12.10): колонки статусу кажуть лише «де людина зараз».
+// «Відкрив бота», «надіслано повторно», вступ за посиланням із таблиці — це
+// рядки журналу, і доки журнал їхав у систему тільки ручним pushTgLogAll(),
+// сторінка «Залучення в ресурси» показувала за 08–09.10 «Зайшли в бота 0» при
+// 9 і 6 у ранковому звіті. Система сама відкидає те, що вже має, тож щогодинна
+// повторна відправка тих самих рядків нічого не подвоює.
+var TGX_LOG_TAIL = 3000;   // скільки останніх рядків журналу переглядати
+
+function tgxPushFreshLog_(since) {
+  try {
+    var sh = tgSS_(MAIN_FILE_ID).getSheetByName(TG_LOG_SHEET);
+    if (!sh) return;
+    var last = sh.getLastRow();
+    if (last < 2) return;
+    var start = Math.max(2, last - TGX_LOG_TAIL + 1);
+    var rows = tgxReadLog_(sh, start, last - start + 1).filter(function (r) {
+      var d = new Date(r.at);
+      return !isNaN(d.getTime()) && d >= since;
+    });
+    var acc = {received:0, ignored:0, unmatched:0, created:0, duplicates:0,
+               skipped:0, failed:0, problem:"", hint:""};
+    while (rows.length) tgxAccLog_(acc, tgxPostLog_(rows.splice(0, TGX_BATCH)));
+    if (acc.created || acc.failed) {
+      Logger.log("Догонка журналу: нових подій " + acc.created +
+                 (acc.failed ? ", пачок не прийнято " + acc.failed : ""));
+    }
+  } catch (err) { Logger.log("tgxPushFreshLog_: " + err); }
 }
 
 function installTgHistoryExportTrigger() {
@@ -468,7 +509,295 @@ function removeTgHistoryExportTrigger() {
 
 
 // ╔══════════════════════════════════════════════════════════╗
-// ║  4. ДОПОМІЖНЕ                                            ║
+// ║  4. ЗВІРКА ДНЯ: РАНКОВИЙ ЗВІТ ↔ СИСТЕМА                  ║
+// ╚══════════════════════════════════════════════════════════╝
+// Ранковий звіт «📊 РОЗСИЛКА TELEGRAM» рахує рядки журналу «_tg_log», а
+// сторінка «Залучення в ресурси» в системі — свій журнал подій. Коли числа
+// розходяться, з двох підсумків не видно, ЯКИЙ рядок розійшовся і чому
+// (сигнал user 12.10: «перевір щоразу цифри і чому вони не сходяться»).
+//
+// tgCompareDay("07.10.2026") бере всі рядки журналу за день і питає систему
+// про кожен — НІЧОГО не записуючи. Відповідь по рядку одна з:
+//   ✅ є в системі цього ж дня
+//   ↔ у системі є, але іншого дня (надсилали раніше — там це «повторно»;
+//      вступ уже зарахований раніше)
+//   ❌ у системі немає
+//   ❓ картки в системі не знайдено
+// tgCompareDay("07.10.2026", true) — те саме, а відсутнє дописує в систему.
+//
+// Без дати — за вчора, як і ранковий звіт.
+
+var TGC_KINDS = [
+  {key: "sent",   title: "📨 Надіслано вперше", system: "sent_first"},
+  {key: "repeat", title: "🔁 Повторно",         system: "sent_repeat"},
+  {key: "bot",    title: "💬 Зайшли в бота",    system: "bot_opened"},
+  {key: "joined", title: "👤 Приєднались",      system: "joined"},
+  {key: "orphan", title: "❓ Вступили без привʼязки", system: "unlinked_join"}
+];
+
+function tgCompareDay(day, apply) {
+  if (!tgEcoApiBase_() || !tgEcoApiSecret_()) {
+    Logger.log("❌ Спершу: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
+    return;
+  }
+  var range = tgcDayRange_(day);
+  if (!range) {
+    Logger.log("❌ Дата має бути у вигляді \"07.10.2026\" (або без дати — за вчора).");
+    return;
+  }
+
+  // ── Рядки журналу за день — так само, як їх бачить ранковий звіт ──
+  var items = [];
+  var sheets = tgxLogSheets_();
+  for (var s = 0; s < sheets.length; s++) {
+    var sh = sheets[s], last = sh.getLastRow();
+    if (last < 2) continue;
+    var vals = sh.getRange(2, 1, last - 1, 9).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      var d = tgcAsDate_(vals[i][0]);
+      if (!d || d < range.from || d >= range.to) continue;
+      var note = tgStr_(vals[i][8]);
+      var src  = tgStr_(vals[i][7]);
+      var cat  = tgcCategory_(note, src);
+      if (!cat) continue;                               // не рахує й ранковий звіт
+      var id = tgStr_(vals[i][1]);
+      var payload = {
+        at: d.toISOString(),
+        phone: tgxCut_(tgStr_(vals[i][3]), 80),
+        region: tgxCut_(tgStr_(vals[i][4]), 120),
+        source: tgxCut_(src, 200),
+        note: tgxCut_(note, 400)
+      };
+      if (/^1[CС]-/i.test(id)) payload.code1C = tgxCut_(id, 120);
+      else if (id) payload.externalId = tgxCut_(id, 120);
+      items.push({cat: cat, at: d, id: id, name: tgStr_(vals[i][2]),
+                  mgr: tgStr_(vals[i][5]), note: note, payload: payload});
+    }
+  }
+  if (!items.length) {
+    Logger.log("За " + range.label + " у журналі таблиці подій немає.");
+    return;
+  }
+
+  // ── Що каже система про кожен рядок ──
+  var failed = 0;
+  for (var b = 0; b < items.length; b += TGX_BATCH) {
+    var part = items.slice(b, b + TGX_BATCH);
+    var res = tgxSend_("/api/leads/engagement-events",
+                       part.map(function (it) { return it.payload; }),
+                       "tgCompareDay", {dryRun: true});
+    if (!res || !res.ok || !res.details) { failed++; continue; }
+    for (var k = 0; k < res.details.length; k++) {
+      var v = res.details[k];
+      if (part[v.i]) part[v.i].verdict = v;
+    }
+  }
+  if (failed) {
+    Logger.log("❌ Система не відповіла на " + failed + " пачк(и). Якщо щойно був деплой — " +
+               "дочекайтесь, доки сайт відкривається, і запустіть ще раз. Якщо система " +
+               "відповідає, а вердиктів немає — її ще не оновили до версії зі звіркою.");
+    return;
+  }
+
+  // ── Підсумок по видах — як у ранковому звіті, з розкладом ──
+  var out = ["🔎 ЗВІРКА ЗА " + range.label + ": журнал таблиці ↔ система", ""];
+  var sum = {};
+  TGC_KINDS.forEach(function (k) {
+    sum[k.key] = {table: 0, same: 0, other: 0, missing: 0, nocard: 0};
+  });
+  items.forEach(function (it) {
+    var st = tgcState_(it, range);
+    it.state = st;
+    var c = sum[it.cat];
+    c.table++;
+    c[st.kind]++;
+  });
+  TGC_KINDS.forEach(function (k) {
+    var c = sum[k.key];
+    if (!c.table) return;
+    out.push(k.title + ": у таблиці " + c.table +
+             " → є в системі цього дня " + c.same +
+             (c.other   ? " · в системі іншим днем " + c.other : "") +
+             (c.missing ? " · немає в системі " + c.missing : "") +
+             (c.nocard  ? " · немає картки " + c.nocard : ""));
+  });
+  out.push("");
+  out.push("Система може мати ще й ВЛАСНІ події цього дня (надсилання з картки, " +
+           "команда /тг), яких у журналі таблиці немає взагалі — тоді в системі " +
+           "число буде більшим.");
+
+  // ── Рядки, що розійшлись ──
+  var diff = items.filter(function (it) { return it.state.kind !== "same"; });
+  if (diff.length) {
+    out.push("");
+    out.push("ЩО САМЕ РОЗІЙШЛОСЬ (" + diff.length + "):");
+    diff.slice(0, 150).forEach(function (it) {
+      out.push("  " + tgcTime_(it.at) + " · " + (it.id || "—") +
+               (it.name ? " " + it.name : "") + " · " + it.note.substring(0, 40) +
+               " · у таблиці: " + (it.mgr || "без менеджера") +
+               "\n      → " + it.state.text);
+    });
+    if (diff.length > 150) out.push("  … і ще " + (diff.length - 150));
+  } else {
+    out.push("");
+    out.push("✅ Кожен рядок журналу за цей день є в системі тим самим днем.");
+  }
+
+  // Менеджер у системі інший — окремо: саме через це «по менеджерах» розходиться
+  var moved = items.filter(function (it) {
+    var m = it.verdict && it.verdict.manager;
+    return m && it.mgr && tgcNorm_(m) !== tgcNorm_(it.mgr) &&
+           tgcNorm_(m).indexOf(tgcNorm_(it.mgr)) !== 0 &&
+           tgcNorm_(it.mgr).indexOf(tgcNorm_(m)) !== 0;
+  });
+  if (moved.length) {
+    out.push("");
+    out.push("ІНШИЙ МЕНЕДЖЕР У СИСТЕМІ (" + moved.length + ") — тому «по менеджерах» числа різні:");
+    moved.slice(0, 50).forEach(function (it) {
+      out.push("  " + (it.id || "—") + (it.name ? " " + it.name : "") +
+               " · у таблиці: " + it.mgr + " · у системі: " + it.verdict.manager);
+    });
+  }
+
+  // ── Дописати відсутнє ──
+  var missing = items.filter(function (it) { return it.state.kind === "missing"; });
+  if (apply === true && missing.length) {
+    var made = 0, bad = 0;
+    for (var m = 0; m < missing.length; m += TGX_BATCH) {
+      var r = tgxPostLog_(missing.slice(m, m + TGX_BATCH).map(function (it) { return it.payload; }));
+      if (r && r.ok) made += r.created || 0; else bad++;
+    }
+    out.push("");
+    out.push(bad ? "⚠️ Дописано в систему: " + made + ", пачок не прийнято: " + bad
+                 : "✅ Дописано в систему подій: " + made);
+  } else if (missing.length) {
+    out.push("");
+    out.push("Дописати відсутнє (" + missing.length + "): tgCompareDay(\"" +
+             range.label + "\", true)");
+  }
+
+  var text = out.join("\n");
+  Logger.log(text);
+  return text;
+}
+
+// Випадачка редактора Apps Script показує лише функції БЕЗ аргументів, тож
+// для запуску кнопкою «Виконати» — готові варіанти.
+function tgCompareYesterday()      { return tgCompareDay("", false); }
+function tgCompareYesterdayApply() { return tgCompareDay("", true); }
+function tgCompareWeek()           { return tgcCompareLastDays_(7, false); }
+function tgCompareWeekApply()      { return tgcCompareLastDays_(7, true); }
+
+// Кожен із останніх N днів (без сьогоднішнього) — окремим блоком у журналі.
+function tgcCompareLastDays_(n, apply) {
+  var now = new Date(), parts = [];
+  for (var back = n; back >= 1; back--) {
+    var d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+    var t = tgCompareDay(d, apply);
+    if (t) parts.push(t);
+  }
+  return parts.join("\n\n");
+}
+
+// Вид рядка — рівно за правилами ранкового звіту (TelegramReport.gs)
+function tgcCategory_(note, src) {
+  var n = tgStr_(note).toLowerCase(), s = tgStr_(src).toLowerCase();
+  if (s.indexOf("скасув") >= 0) return "";
+  if (n.indexOf("вперше") === 0) return "sent";
+  if (n.indexOf("повторно") === 0) return "repeat";
+  if (n.indexOf("приєднався") === 0 || n.indexOf("підписався") === 0) return "joined";
+  if (n.indexOf("відкрив бота") === 0) return "bot";
+  if (n.indexOf("не привʼязано") === 0 || n.indexOf("не прив'язано") === 0) return "orphan";
+  return "";
+}
+
+// Що про рядок сказала система — людською мовою
+function tgcState_(it, range) {
+  var v = it.verdict;
+  if (!v) return {kind: "missing", text: "система не відповіла про цей рядок"};
+  if (v.verdict === "unmatched") {
+    return {kind: "nocard", text: "❓ картки з таким ID чи номером у системі немає — " +
+                                  "подія нікуди не лягла"};
+  }
+  if (v.verdict === "missing" || v.verdict === "created") {
+    return {kind: "missing", text: "❌ у системі цієї події немає"};
+  }
+  if (v.verdict === "ignored") {
+    return {kind: "missing", text: "система не вважає цей рядок подією (немає дати?)"};
+  }
+  var at = v.existingAt ? new Date(v.existingAt) : null;
+  if (at && at >= range.from && at < range.to) {
+    return {kind: "same", text: "✅ є в системі цього дня"};
+  }
+  var when = at ? tgcDate_(at) : "раніше";
+  var from = tgcSourceLabel_(v.existingSource);
+  var text;
+  if (it.cat === "sent") {
+    text = "↔ цій людині в системі вже надсилали " + when + from +
+           " — тому система рахує це «повторно», а не «вперше»";
+  } else if (it.cat === "joined") {
+    text = "↔ вступ цієї людини система вже зарахувала " + when + from;
+  } else {
+    text = "↔ у системі ця подія стоїть " + when + from;
+  }
+  if (v.target === "client" && /^LTEX-/i.test(it.id)) {
+    text += " (лід із таблиці — у системі це картка клієнта)";
+  }
+  return {kind: "other", text: text};
+}
+
+function tgcSourceLabel_(src) {
+  var s = tgStr_(src);
+  if (!s) return "";
+  if (s.indexOf("card") === 0) return " (з картки системи)";
+  if (s === "viber_cmd") return " (командою /тг у Viber)";
+  if (s === "bot" || s.indexOf("site") === 0) return " (бот системи)";
+  if (s === "sheet" || s === "sheet_log") return " (з таблиці)";
+  if (s === "import") return " (перенос історії)";
+  return " (" + s + ")";
+}
+
+// «07.10.2026» → межі дня в часовому поясі скрипта; порожньо — вчора
+function tgcDayRange_(day) {
+  var from;
+  if (day instanceof Date) {
+    from = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  } else if (tgStr_(day)) {
+    var m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(tgStr_(day));
+    if (!m) return null;
+    from = new Date(+m[3], +m[2] - 1, +m[1]);
+  } else {
+    var now = new Date();
+    from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  }
+  var to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
+  return {from: from, to: to, label: tgcDate_(from)};
+}
+
+function tgcAsDate_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  var m = /^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(tgStr_(v));
+  if (!m) return null;
+  return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0));
+}
+
+function tgcDate_(d) {
+  function p(n) { return (n < 10 ? "0" : "") + n; }
+  return p(d.getDate()) + "." + p(d.getMonth() + 1) + "." + d.getFullYear();
+}
+
+function tgcTime_(d) {
+  function p(n) { return (n < 10 ? "0" : "") + n; }
+  return p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+function tgcNorm_(s) {
+  return tgStr_(s).toLowerCase().replace(/[’'`ʼ]/g, "").replace(/\s+/g, " ");
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  5. ДОПОМІЖНЕ                                            ║
 // ╚══════════════════════════════════════════════════════════╝
 
 // Аркуші головного файлу, у яких є блок Telegram.
