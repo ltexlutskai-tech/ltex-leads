@@ -488,6 +488,56 @@ test("рядок ліда несе свої поля — щоб система �
   }
 });
 
+console.log("\nМенеджери: таблиця ↔ система (запит user 13.10)");
+
+test("звіт: менеджер таблиці → на кому в системі, розклад лід/клієнт", () => {
+  const env = makeEnv({
+    sheets: [
+      { name: "🔒 2026", firstRow: 5, rows: [
+        cells({ 1: "LTEX-1", 7: "0671112233", 11: "Мельник Володимир" }),
+        cells({ 1: "LTEX-2", 7: "0671112234", 11: "Мельник Володимир" }),
+      ] },
+      { name: "🏭 Клієнти 1С", firstRow: 5, rows: [cells({ 1: "1C-4741", 11: "Кузенко Тарас" })] },
+    ],
+    post: (p) => ({ ok: true, unmatched: 0, users: ["Володимир", "Кузенко Тарас Степанович"],
+                    pairs: [
+                      { sheet: "2026", sheetManager: "Мельник Володимир", systemManager: "Захарчук Олександра", kind: "lead", count: 1 },
+                      { sheet: "2026", sheetManager: "Мельник Володимир", systemManager: "Дунас Богдан", kind: "client", count: 1 },
+                      { sheet: "Клієнти 1С", sheetManager: "Кузенко Тарас", systemManager: "", kind: "client", count: 1 },
+                    ] }),
+  });
+  let written = null;
+  env.run("tgmWriteTab_ = function (lines, users) { WRITTEN_ = {lines: lines, users: users}; }");
+  env.ctx.WRITTEN_ = null;
+  const text = env.run("tgManagersReport()");
+  written = env.ctx.WRITTEN_;
+  eq(env.posts[0].payload.mode, "compare", "режим");
+  eq(env.posts[0].payload.rows.map((r) => [r.sheet, r.manager]),
+     [["2026", "Мельник Володимир"], ["2026", "Мельник Володимир"], ["Клієнти 1С", "Кузенко Тарас"]], "рядки");
+  eq(written.lines[0], ["2026", "Мельник Володимир", 2, "Захарчук Олександра 1; Дунас Богдан 1 (клієнти)"], "рядок звіту");
+  eq(written.lines[1], ["Клієнти 1С", "Кузенко Тарас", 1, "без менеджера 1"], "1С");
+  eq(written.users, ["Володимир", "Кузенко Тарас Степанович"], "список для вибору");
+  if (text.indexOf("tgManagersApplyCheck") === -1) throw new Error(text);
+});
+
+test("застосування: лише рядки з вибраним «Поставити на»", () => {
+  const env = makeEnv({
+    sheets: [
+      { name: "🔒 2026", firstRow: 5, rows: [cells({ 1: "LTEX-1", 11: "Мельник Володимир" })] },
+      { name: "🔁 Менеджери → система", rows: [
+        ["2026", "Мельник Володимир", 300, "…", "Володимир"],
+        ["2026", "Захарчук Олександра", 200, "…", ""],
+      ] },
+    ],
+    post: (p) => ({ ok: true, changed: 1, same: 0, skippedClient: 0, unmatched: 0, unknownUsers: [] }),
+  });
+  const text = env.run("tgManagersApplyCheck()");
+  eq(env.posts[0].payload.mode, "apply", "режим");
+  eq(env.posts[0].payload.dryRun, true, "перевірка");
+  eq(env.posts[0].payload.assign, { "2026|Мельник Володимир": "Володимир" }, "рішення");
+  if (text.indexOf("Зміниться: 1") === -1) throw new Error(text);
+});
+
 console.log("\nЗвірка всієї історії");
 test("по рядку на кожен день і дописування відсутнього", () => {
   const post = (p) => {
