@@ -29,6 +29,8 @@
 //   tgCompareWeek() / tgCompareWeekApply() — останні 7 днів, без параметрів
 //   tgCompareYesterday() / tgCompareYesterdayApply() — за вчора
 //   tgCompareAll() / tgCompareAllApply() — уся історія, по рядку на день
+//   tgManagersReport() → tgManagersApplyCheck() → tgManagersApply() —
+//                     менеджери таблиці ↔ відповідальні в системі
 //   pushSheetNotesCheck() / pushSheetNotesAll() — примітки менеджерів
 //                     («2026», «Клієнти 1С» і файли менеджерів) → система
 //
@@ -1009,6 +1011,198 @@ function tgxExplainUnmatched_(samples, rows) {
 function tgxCellText_(v) {
   if (v instanceof Date && !isNaN(v.getTime())) return tgcDate_(v);
   return tgStr_(v);
+}
+
+
+// ╔══════════════════════════════════════════════════════════╗
+// ║  МЕНЕДЖЕРИ: ТАБЛИЦЯ ↔ СИСТЕМА                            ║
+// ╚══════════════════════════════════════════════════════════╝
+// Запит user 13.10: ліди, які в «2026» стоять на «Мельник Володимир» чи
+// «Кузенко Тарас», у системі опинились на інших менеджерах. Перед закриттям
+// таблиць керівник має побачити повну картину й вирішити сам.
+//
+//   tgManagersReport()     — аркуш «🔁 Менеджери → система»: по кожному
+//                            менеджеру таблиці — скільки рядків і на кому вони
+//                            зараз у системі; колонка «Поставити на» — список
+//                            користувачів системи. Нічого в системі не змінює.
+//   tgManagersApplyCheck() — скільки відповідальних зміниться (нічого не пише).
+//   tgManagersApply()      — поставити відповідальних за колонкою «Поставити на».
+//                            Порожня клітинка = не чіпати.
+//
+// Межа: рядок «2026», який у системі вже картка клієнта 1С, не переставляємо —
+// там свій агент з 1С. Такі рядки у звіті видно окремо.
+
+var TGM_TAB = "🔁 Менеджери → система";
+var TGM_HEAD = ["Аркуш", "Менеджер у таблиці", "Рядків", "Зараз у системі (лідів / клієнтів)",
+                "Поставити на (порожньо — не чіпати)"];
+
+// Рядки обох аркушів для звірки: ID, номер, менеджер у рядку
+function tgmRows_() {
+  var out = [];
+  var ss = tgSS_(MAIN_FILE_ID);
+  var sources = [];
+  var main = ss.getSheets().filter(function (sh) {
+    return tgxWanted_(sh.getName()) && sh.getName().indexOf("2026") >= 0;
+  })[0];
+  if (main) sources.push({sh: main, label: "2026"});
+  var reg = tg1CSheetName_() ? ss.getSheetByName(tg1CSheetName_()) : null;
+  if (reg) sources.push({sh: reg, label: "Клієнти 1С"});
+  sources.forEach(function (src) {
+    var last = src.sh.getLastRow();
+    if (last < DATA_START) return;
+    var vals = src.sh.getRange(DATA_START, 1, last - DATA_START + 1, 11).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      var id = tgStr_(vals[i][0]);
+      if (!id) continue;
+      var row = {sheet: src.label, manager: tgxCut_(tgStr_(vals[i][10]), 200) || "",
+                 phone: tgxCut_(tgStr_(vals[i][6]), 80)};
+      if (/^1[CС]-/i.test(id)) row.code1C = tgxCut_(id, 120);
+      else row.externalId = tgxCut_(id, 120);
+      out.push(row);
+    }
+  });
+  return out;
+}
+
+function tgManagersReport() {
+  if (!tgEcoApiBase_() || !tgEcoApiSecret_()) {
+    Logger.log("❌ Спершу: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
+    return;
+  }
+  var rows = tgmRows_();
+  var agg = {}, users = [], unmatched = 0, failed = 0;
+  for (var b = 0; b < rows.length; b += TGX_BATCH) {
+    var res = tgxSend_("/api/leads/sheet-managers", rows.slice(b, b + TGX_BATCH),
+                       "tgManagersReport", {mode: "compare"});
+    if (!res || !res.ok) { failed++; continue; }
+    unmatched += res.unmatched || 0;
+    if (res.users && !users.length) users = res.users;
+    (res.pairs || []).forEach(function (p) {
+      var key = p.sheet + "|" + p.sheetManager;
+      if (!agg[key]) agg[key] = {sheet: p.sheet, manager: p.sheetManager, total: 0, sys: {}};
+      agg[key].total += p.count;
+      var who = (p.systemManager || "без менеджера");
+      if (!agg[key].sys[who]) agg[key].sys[who] = {lead: 0, client: 0};
+      agg[key].sys[who][p.kind] += p.count;
+    });
+  }
+  if (failed) {
+    Logger.log("❌ Система не відповіла на " + failed + " пачк(и). Оновіть сайт або спробуйте пізніше.");
+    return;
+  }
+  var lines = tgmReportLines_(agg);
+  tgmWriteTab_(lines, users);
+
+  var head = ["👥 МЕНЕДЖЕРИ: таблиця → система",
+              "Аркуш «" + TGM_TAB + "» оновлено: " + lines.length + " рядків."];
+  if (unmatched) head.push("Рядків без картки в системі: " + unmatched);
+  head.push("Що далі: у колонці «Поставити на» виберіть менеджера там, де треба " +
+            "переставити (порожньо — не чіпати), потім tgManagersApplyCheck → tgManagersApply.");
+  head.push("");
+  var text = head.concat(lines.map(function (l) {
+    return "«" + l[0] + "» · " + (l[1] || "без менеджера") + " — " + l[2] + " → " + l[3];
+  })).join("\n");
+  Logger.log(text);
+  return text;
+}
+
+// Рядки звіту: аркуш, менеджер, рядків, розклад «на кому в системі»
+function tgmReportLines_(agg) {
+  var list = [];
+  for (var k in agg) list.push(agg[k]);
+  list.sort(function (a, b) {
+    return a.sheet === b.sheet ? b.total - a.total : (a.sheet < b.sheet ? -1 : 1);
+  });
+  return list.map(function (it) {
+    var parts = [];
+    for (var who in it.sys) {
+      var c = it.sys[who];
+      parts.push({who: who, n: c.lead + c.client,
+                  text: who + " " + (c.lead + c.client) +
+                        (c.client && c.lead ? " (лідів " + c.lead + ", клієнтів " + c.client + ")"
+                         : c.client && it.sheet === "2026" ? " (клієнти)" : "")});
+    }
+    parts.sort(function (a, b) { return b.n - a.n; });
+    return [it.sheet, it.manager, it.total, parts.map(function (p) { return p.text; }).join("; ")];
+  });
+}
+
+// Аркуш звіту. Уже вписані «Поставити на» зберігаємо: звіт можна оновлювати.
+function tgmWriteTab_(lines, users) {
+  var ss = tgSS_(MAIN_FILE_ID);
+  var sh = ss.getSheetByName(TGM_TAB) || ss.insertSheet(TGM_TAB);
+  var keep = {};
+  var last = sh.getLastRow();
+  if (last >= 2) {
+    sh.getRange(2, 1, last - 1, 5).getValues().forEach(function (r) {
+      if (tgStr_(r[4])) keep[tgStr_(r[0]) + "|" + tgStr_(r[1])] = tgStr_(r[4]);
+    });
+  }
+  sh.clear();
+  sh.getRange(1, 1, 1, TGM_HEAD.length).setValues([TGM_HEAD])
+    .setFontWeight("bold").setBackground("#2E6DA4").setFontColor("#FFFFFF").setWrap(true);
+  sh.setFrozenRows(1);
+  if (lines.length) {
+    var vals = lines.map(function (l) {
+      return [l[0], l[1] || "", l[2], l[3], keep[l[0] + "|" + (l[1] || "")] || ""];
+    });
+    sh.getRange(2, 1, vals.length, 5).setValues(vals);
+    if (users.length) {
+      var rule = SpreadsheetApp.newDataValidation().requireValueInList(users, true)
+        .setAllowInvalid(false).build();
+      sh.getRange(2, 5, vals.length, 1).setDataValidation(rule);
+    }
+  }
+  sh.setColumnWidth(1, 110); sh.setColumnWidth(2, 220); sh.setColumnWidth(3, 70);
+  sh.setColumnWidth(4, 520); sh.setColumnWidth(5, 260);
+}
+
+function tgManagersApplyCheck() { return tgmApply_(true); }
+function tgManagersApply()      { return tgmApply_(false); }
+
+function tgmApply_(dryRun) {
+  if (!tgEcoApiBase_() || !tgEcoApiSecret_()) {
+    Logger.log("❌ Спершу: tgSetProp_(\"TG_ECO_API\", \"https://new.ltex.com.ua\")");
+    return;
+  }
+  var sh = tgSS_(MAIN_FILE_ID).getSheetByName(TGM_TAB);
+  if (!sh || sh.getLastRow() < 2) {
+    Logger.log("❌ Аркуша «" + TGM_TAB + "» немає — спершу tgManagersReport().");
+    return;
+  }
+  var assign = {}, n = 0;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues().forEach(function (r) {
+    var to = tgStr_(r[4]);
+    if (!to) return;
+    assign[tgStr_(r[0]) + "|" + tgStr_(r[1])] = to;
+    n++;
+  });
+  if (!n) {
+    Logger.log("У колонці «Поставити на» нічого не вибрано — змінювати нічого.");
+    return;
+  }
+  var rows = tgmRows_();
+  var acc = {changed: 0, same: 0, skippedClient: 0, unmatched: 0, failed: 0}, unknown = [];
+  for (var b = 0; b < rows.length; b += TGX_BATCH) {
+    var res = tgxSend_("/api/leads/sheet-managers", rows.slice(b, b + TGX_BATCH),
+                       "tgManagersApply", {mode: "apply", assign: assign, dryRun: !!dryRun});
+    if (!res || !res.ok) { acc.failed++; continue; }
+    ["changed", "same", "skippedClient", "unmatched"].forEach(function (k) { acc[k] += res[k] || 0; });
+    (res.unknownUsers || []).forEach(function (u) { if (unknown.indexOf(u) < 0) unknown.push(u); });
+  }
+  var text = [
+    dryRun ? "🔎 ПЕРЕВІРКА (нічого не змінено)" : (acc.failed ? "⚠️ Виконано частково" : "✅ Відповідальних переставлено"),
+    "Рішень у колонці «Поставити на»: " + n,
+    (dryRun ? "Зміниться: " : "Змінено: ") + acc.changed,
+    "Уже на потрібному менеджері: " + acc.same,
+    acc.skippedClient ? "Не чіпали (рядок «2026», а в системі це клієнт 1С зі своїм агентом): " + acc.skippedClient : "",
+    acc.unmatched ? "Без картки в системі: " + acc.unmatched : "",
+    unknown.length ? "❌ Таких користувачів у системі немає: " + unknown.join(", ") : "",
+    acc.failed ? "Пачок не прийнято: " + acc.failed : "",
+    dryRun ? "Застосувати: tgManagersApply" : ""
+  ].filter(String).join("\n");
+  Logger.log(text);
+  return text;
 }
 
 // Вид рядка — рівно за правилами ранкового звіту (TelegramReport.gs)
