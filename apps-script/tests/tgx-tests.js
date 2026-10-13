@@ -520,6 +520,32 @@ test("звіт: менеджер таблиці → на кому в систе�
   if (text.indexOf("tgManagersApplyCheck") === -1) throw new Error(text);
 });
 
+test("рішення user 13.10 підставляються в порожні «Поставити на», вписане вручну — важливіше", () => {
+  const env = makeEnv({});
+  const out = env.run(`(function () {
+    var written = null;
+    var sh = {
+      getLastRow: function () { return 3; },
+      getRange: function (r, c, nr, nc) {
+        return {
+          getValues: function () { return [["2026", "Кузенко Тарас", 1, "", "Хтось Вручну"],
+                                            ["2026", "Мельник Володимир", 1, "", ""]]; },
+          setValues: function (v) { if (nc === 5 && r === 2) written = v; return this; },
+          setFontWeight: function () { return this; }, setBackground: function () { return this; },
+          setFontColor: function () { return this; }, setWrap: function () { return this; },
+          setDataValidation: function () { return this; }
+        };
+      },
+      clear: function () {}, setFrozenRows: function () {}, setColumnWidth: function () {}
+    };
+    tgSS_ = function () { return { getSheetByName: function () { return sh; } }; };
+    tgmWriteTab_([["2026", "Кузенко Тарас", 228, "…"], ["2026", "Мельник Володимир", 212, "…"],
+                  ["Клієнти 1С", "", 305, "…"], ["2026", "Дунас Богдан", 269, "…"]], []);
+    return written.map(function (r) { return r[4]; });
+  })()`);
+  eq(out, ["Хтось Вручну", "Володимир", "Кузенко Тарас Степанович", ""], "Поставити на");
+});
+
 test("застосування: лише рядки з вибраним «Поставити на»", () => {
   const env = makeEnv({
     sheets: [
