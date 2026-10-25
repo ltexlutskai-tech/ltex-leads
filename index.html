@@ -111,6 +111,16 @@ label{
 label:first-of-type{margin-top:0}
 
 .req{color:var(--red);margin-left:2px}
+/* Р-114: телефон — найважливіше поле */
+#fp{font-size:22px;font-weight:700;letter-spacing:1.5px;font-family:ui-monospace,Consolas,monospace}
+#fp.check{border-color:#f59e0b;background:#fffbeb;color:#1f2937}
+.ph-hint{font-size:13px;margin:4px 0 6px;line-height:1.4}
+.ph-hint .ok{color:#15803d}
+.ph-hint .warn{color:#b45309;font-weight:600}
+.ph-hint .bad{color:#b91c1c;font-weight:600}
+.ph-hint button{font-family:ui-monospace,Consolas,monospace;font-size:14px;margin:2px 6px 2px 0;padding:2px 8px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer}
+.ph-ok{display:none;gap:8px;align-items:flex-start;margin:4px 0 10px;padding:8px;border:1px solid #fcd34d;border-radius:8px;background:#fffbeb;font-size:13px;color:#78350f}
+.ph-ok input{-webkit-appearance:checkbox;appearance:checkbox;width:18px;height:18px;min-height:0;padding:0;margin:1px 0 0;flex:none}
 
 input,select,textarea{
   width:100%;
@@ -335,7 +345,9 @@ select option{background:#162030}
       <label>Ім'я<span class="req">*</span></label>
       <input id="fn" data-label="Ім'я" placeholder="Прізвище Ім'я" autocomplete="off">
       <label>Телефон<span class="req">*</span></label>
-      <input id="fp" data-label="Телефон" placeholder="0671234567" type="tel">
+      <input id="fp" data-label="Телефон" placeholder="0671234567" type="tel" oninput="phoneFromAi=false;showPhoneHint()">
+      <div class="ph-hint" id="fpHint"></div>
+      <label class="ph-ok" id="fpOkRow"><input type="checkbox" id="fpOk"> <span>Номер звірено з оригіналом заявки — цифра в цифру</span></label>
       <label>Область</label>
       <input id="fr" data-label="Область" placeholder="Київська">
       <label>Місто</label>
@@ -421,6 +433,124 @@ var VIBER_BOT_URI = "ltexsendpulse";
 
 var b64  = null;
 var mime = "image/jpeg";
+
+// ══════════════════════════════════════════════════════════
+// Р-114 (24.10): ЗАХИСТ НОМЕРА ТЕЛЕФОНУ
+// Той самий перелік кодів, що в системі (lib/phone-check.ts) і в боті.
+// ══════════════════════════════════════════════════════════
+var UA_MOBILE_CODES = {"039":"Київстар","050":"Vodafone","063":"lifecell","066":"Vodafone","067":"Київстар","068":"Київстар","073":"lifecell","075":"Vodafone","077":"Київстар","089":"Інтертелеком","091":"3Mob","092":"PEOPLEnet","093":"lifecell","094":"Інтертелеком","095":"Vodafone","096":"Київстар","097":"Київстар","098":"Київстар","099":"Vodafone"};
+var phoneFromAi = false;      // номер підставив AI — вимагаємо звірку
+var phoneAiWarnings = [];     // що насторожило при розпізнаванні
+var phoneTextCandidates = []; // номери, що реально є в тексті
+
+function digitDiff_(a, b) {
+  a = String(a || ""); b = String(b || "");
+  if (a.length !== b.length) return 99;
+  var n = 0; for (var i = 0; i < a.length; i++) if (a.charAt(i) !== b.charAt(i)) n++;
+  return n;
+}
+function toNationalUa_(raw) {
+  var d = String(raw || "").replace(/\D/g, "");
+  if (d.length === 14 && d.indexOf("00380") === 0) return "0" + d.substring(5);
+  if (d.length === 12 && d.indexOf("380") === 0) return "0" + d.substring(3);
+  if (d.length === 11 && d.indexOf("80") === 0) return "0" + d.substring(2);
+  if (d.length === 10 && d.charAt(0) === "0") return d;
+  if (d.length === 9 && d.charAt(0) !== "0") return "0" + d;
+  return null;
+}
+/** {status: ok|warn|foreign|invalid, phone, msg, needsConfirm, sugg} */
+function phoneCheck_(raw) {
+  var t = String(raw || "").trim(), d = t.replace(/\D/g, ""), nat = toNationalUa_(t);
+  if (!nat) {
+    if (/^(\+|00)/.test(t) && !/^(\+|00)380/.test(t) && d.length >= 8 && d.length <= 15)
+      return {status:"foreign", phone:"+" + d.replace(/^00/, ""), needsConfirm:false, msg:"🌍 Закордонний номер +" + d.replace(/^00/, "")};
+    if (d.length >= 11 && d.length <= 15 && d.charAt(0) !== "0" && d.indexOf("380") !== 0)
+      return {status:"foreign", phone:"+" + d, needsConfirm:true, msg:"Схоже на закордонний номер +" + d + ". Якщо так — запишіть його з «+»; якщо український — у номері зайві цифри."};
+    // Жорстка відмова лише коли цифр менше 9; інакше — звірка й позначка.
+    if (d.length < 9) return {status:"invalid", phone:t, msg: d.length ? "У номері лише " + d.length + " цифр — український номер має 10 цифр (0XX XXX XX XX)." : ""};
+    return {status:"warn", phone:t, needsConfirm:true, sugg:[],
+      msg:"У номері " + d.length + " цифр — український номер має 10 цифр (0XX XXX XX XX). Звірте з оригіналом; якщо номер справді такий — поставте позначку."};
+  }
+  var code = nat.substring(0, 3);
+  if (UA_MOBILE_CODES[code]) return {status:"ok", phone:nat, msg:"✓ " + nat + " · " + UA_MOBILE_CODES[code]};
+  var sugg = [];
+  for (var c in UA_MOBILE_CODES) if (digitDiff_(c, code) === 1) sugg.push(c + nat.substring(3));
+  var maybeForeign = d.length === 9 && d.charAt(0) !== "0";
+  return {status:"warn", phone:nat, needsConfirm:true, sugg:sugg,
+    msg:"Код " + code + " — не код мобільного оператора України. Найчастіше це помилка в одній цифрі. Звірте номер з оригіналом." +
+      (maybeForeign ? " Якщо номер закордонний — допишіть код країни з «+» (Польща: +48)." : "")};
+}
+/**
+ * Усі номери, що є в тексті: український 0XXXXXXXXX або закордонний +XX…
+ * Дати й час — не номери; 9 цифр без 0 — лише без крапок і з мобільним кодом.
+ */
+function extractPhones_(text) {
+  var src = String(text || "")
+    .replace(/\b\d{1,2}[.\/]\d{1,2}[.\/](?:\d{4}|\d{2})\b/g, " | ")
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " | ");
+  var out = [], re = /\+?\d[\d\s().-]{7,20}\d/g, m;
+  while ((m = re.exec(src)) !== null) {
+    var raw = m[0], v = toNationalUa_(raw), dg = raw.replace(/\D/g, "");
+    if (v && dg.length === 9 && dg.charAt(0) !== "0" &&
+        (raw.indexOf(".") !== -1 || !UA_MOBILE_CODES[v.substring(0, 3)])) v = null;
+    if (!v && /^\+/.test(raw) && !/^\+380/.test(raw.replace(/[\s().-]/g, "")) &&
+        dg.length >= 8 && dg.length <= 15) v = "+" + dg;
+    if (v && out.indexOf(v) === -1) out.push(v);
+  }
+  return out;
+}
+/** Кілька номерів у полі «Телефон» → {phone: перший, extra: решта}. */
+function splitPhoneField_(raw) {
+  var t = String(raw || "").trim();
+  if (toNationalUa_(t) || /^(\+|00)/.test(t) && t.replace(/\D/g, "").length <= 15) return {phone:t, extra:[]};
+  var found = extractPhones_(t);
+  if (found.length < 2) return {phone:t, extra:[]};
+  return {phone:found[0], extra:found.slice(1)};
+}
+function canonPhone_(raw) {
+  var t = String(raw || "").trim();
+  return toNationalUa_(t) || (/^(\+|00)/.test(t) ? "+" + t.replace(/\D/g, "").replace(/^00/, "") : t.replace(/\D/g, ""));
+}
+function phoneNeedsTick_() {
+  var v = document.getElementById("fp").value.trim();
+  if (!v) return false;
+  var c = phoneCheck_(v);
+  return phoneFromAi || !!c.needsConfirm;
+}
+function pickPhone(v) {
+  document.getElementById("fp").value = v;
+  phoneFromAi = false; // обрали самі з тексту / підказки
+  showPhoneHint();
+}
+function esc_(s) { return String(s).replace(/[&<>"]/g, function(ch){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[ch]; }); }
+function showPhoneHint() {
+  var el = document.getElementById("fp"), v = el.value.trim();
+  var hint = document.getElementById("fpHint"), row = document.getElementById("fpOkRow");
+  var html = "";
+  if (v) {
+    var c = phoneCheck_(v);
+    var cls = c.status === "ok" ? "ok" : (c.status === "foreign" && !c.needsConfirm) ? "ok" : c.status === "invalid" ? "bad" : "warn";
+    if (c.msg) html += "<div class='" + cls + "'>" + (cls === "ok" ? "" : "⚠️ ") + esc_(c.msg) + "</div>";
+    if (c.sugg && c.sugg.length) {
+      html += "<div>Можливо: ";
+      c.sugg.forEach(function(sg){ html += "<button type='button' onclick=\"pickPhone('" + sg + "')\">" + sg + "</button>"; });
+      html += "</div>";
+    }
+  }
+  phoneAiWarnings.forEach(function(w){ html += "<div class='warn'>⚠️ " + esc_(w) + "</div>"; });
+  var others = phoneTextCandidates.filter(function(p){ return p !== canonPhone_(v); });
+  if (others.length) {
+    html += "<div>Номери в тексті: ";
+    others.forEach(function(p){ html += "<button type='button' onclick=\"pickPhone('" + p + "')\">" + p + "</button>"; });
+    html += "</div>";
+  }
+  hint.innerHTML = html;
+  var need = phoneNeedsTick_();
+  row.style.display = need ? "flex" : "none";
+  if (!need) document.getElementById("fpOk").checked = false;
+  el.classList.toggle("check", need && !document.getElementById("fpOk").checked);
+}
+document.addEventListener("change", function(e){ if (e.target && e.target.id === "fpOk") showPhoneHint(); });
 document.getElementById("fd").value = new Date().toISOString().split("T")[0];
 
 // ── Статус ────────────────────────────────────────────────
@@ -577,7 +707,37 @@ async function doParse() {
     }
 
     if (inSrc(p.name))       setF("fn", p.name);
-    if (phoneInSrc(p.phone)) setF("fp", p.phone);
+
+    // ── Р-114: номер звіряємо з цифрами, що реально є в тексті ──
+    var aiPhone = p.phone ? canonPhone_(p.phone) : "";
+    var cands = extractPhones_(rawText);
+    var warns = [], phone = "", fromImage = false;
+    if (aiPhone && cands.indexOf(aiPhone) !== -1) {
+      phone = aiPhone;                                  // AI = текст
+    } else if (cands.length === 1 && aiPhone && b64 && digitDiff_(aiPhone, cands[0]) > 2) {
+      phone = aiPhone; fromImage = true;                // у тексті ІНШИЙ номер (підпис, менеджер)
+      warns.push("Номер прочитано зі скріншота — звірте КОЖНУ цифру з картинкою.");
+      warns.push("У тексті є інший номер " + cands[0] + " — перевірте, чий він.");
+    } else if (cands.length === 1) {
+      phone = cands[0];                                 // беремо ТЕКСТ, а не AI
+      if (aiPhone && aiPhone !== phone) warns.push("AI прочитав номер як " + aiPhone + ", а в тексті написано " + phone + " — узято номер з тексту.");
+    } else if (cands.length > 1) {
+      var best = null, bd = 99;
+      cands.forEach(function(c){ var dd = digitDiff_(c, aiPhone); if (dd < bd) { bd = dd; best = c; } });
+      if (best && bd <= 2) phone = best;
+      warns.push("У тексті кілька номерів: " + cands.join(", ") + " — оберіть потрібний.");
+    } else if (aiPhone && b64) {
+      phone = aiPhone; fromImage = true;                // лише зі скріншота
+      warns.push("Номер прочитано зі скріншота — звірте КОЖНУ цифру з картинкою.");
+    } else if (aiPhone && phoneInSrc(aiPhone)) {
+      phone = aiPhone;
+    }
+    if (phone) document.getElementById("fp").value = phone;
+    phoneFromAi = !!phone;
+    phoneAiWarnings = warns;
+    phoneTextCandidates = cands;
+    document.getElementById("fpOk").checked = false;
+    showPhoneHint();
     function geoInSrc(val) {
       if (!val || String(val).trim() === "") return false;
       if (!hasText) return true;
@@ -646,6 +806,22 @@ function doGen() {
   var mgr   = document.getElementById("fm").value.trim();
   if (!name)  { setSt("Вкажіть ім'я клієнта", "err"); return; }
   if (!phone) { setSt("Вкажіть телефон", "err"); return; }
+  // Р-114: два номери в полі — перший у «Телефон», решта у «Цікавить»
+  var split = splitPhoneField_(phone);
+  if (split.extra.length) {
+    phone = split.phone;
+    document.getElementById("fp").value = phone;
+    var fi = document.getElementById("fi2");
+    fi.value = (fi.value.trim() ? fi.value.trim() + " | " : "") + "Інший номер: " + split.extra.join(", ");
+  }
+  // Р-114: неможливий номер не пускаємо; підозрілий / від AI — лише після звірки
+  var pc = phoneCheck_(phone);
+  if (pc.status === "invalid") { setSt(pc.msg || "Невірний номер", "err"); showPhoneHint(); return; }
+  if (phoneNeedsTick_() && !document.getElementById("fpOk").checked) {
+    setSt("Звірте номер з оригіналом і поставте позначку «Номер звірено»", "err");
+    showPhoneHint(); document.getElementById("fp").focus(); return;
+  }
+  if (pc.status === "ok" || pc.status === "foreign") document.getElementById("fp").value = pc.phone;
   if (!mgr)   { setSt("Оберіть менеджера", "err"); return; }
   var L = [];
   for (var i = 0; i < ids.length; i++) {
@@ -656,6 +832,8 @@ function doGen() {
     if (ids[i] === "fd") { var pts = val.split("-"); val = pts[2]+"."+pts[1]+"."+pts[0]; }
     L.push(lbl + ": " + val);
   }
+  // Незвичний номер, який людина підтвердила, — бот (v6.8) збереже лише з цим рядком
+  if (pc.needsConfirm && document.getElementById("fpOk").checked) L.push("Номер підтверджую");
   var box = document.getElementById("out");
   box.textContent = L.join("\n");
   box.classList.remove("empty");
@@ -760,6 +938,9 @@ function doClear() {
     document.getElementById(id).selectedIndex = 0;
   });
   document.getElementById("fd").value = new Date().toISOString().split("T")[0];
+  phoneFromAi = false; phoneAiWarnings = []; phoneTextCandidates = [];
+  document.getElementById("fpOk").checked = false;
+  showPhoneHint();
   var box = document.getElementById("out");
   box.textContent = "Заповніть поля і натисніть «Сформувати шаблон»";
   box.classList.add("empty");
