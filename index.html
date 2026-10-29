@@ -427,6 +427,9 @@ select option{background:#162030}
 // ══════════════════════════════════════════════════════════
 // НАЛАШТУВАННЯ
 // ══════════════════════════════════════════════════════════
+// Р-171 (29.10): розбір — наш сервер (ліди йдуть у CRM, а не в таблицю).
+// Старий воркер лишається запасним, якщо сервер саме оновлюється.
+var LTEX_PARSE_URL = "https://ltex.com.ua/api/leads/page-parse";
 var WORKER_URL    = "https://bitter-violet-59acltex-leads-proxy.ltex-lutsk-ai.workers.dev/";
 var VIBER_BOT_URI = "ltexsendpulse";
 // ══════════════════════════════════════════════════════════
@@ -672,14 +675,30 @@ async function doParse() {
   }, 35000);
 
   try {
-    var resp = await fetch(WORKER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text, image: b64 || "", imageMime: mime })
-    });
+    var payload = JSON.stringify({ text: text, image: b64 || "", imageMime: mime });
+    var resp = null;
+    try {
+      resp = await fetch(LTEX_PARSE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload
+      });
+      // Сервер недоступний (оновлення, блок) — запасний шлях; 400/429 — показуємо як є.
+      if (!resp.ok && resp.status !== 400 && resp.status !== 429) resp = null;
+    } catch (e) { resp = null; }
+    if (!resp) {
+      resp = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload
+      });
+    }
     if (timedOut) return;
     clearTimeout(timeout);
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    if (!resp.ok) {
+      var errBody = await resp.json().catch(function(){ return null; });
+      throw new Error(errBody && errBody.error ? errBody.error : "HTTP " + resp.status);
+    }
     var raw = await resp.text();
     var p;
     try { p = JSON.parse(raw); }
